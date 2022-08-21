@@ -1,0 +1,4 @@
+requests
+simplejson
+pypiwin32
+python-binance
