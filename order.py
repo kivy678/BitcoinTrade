@@ -76,14 +76,29 @@ if __name__ == '__main__':
             break
 
 
-    print('최소 매수량: ', minQty)
-    print('최소 매수가: ', minNotional)
+    #print('최소 매수량: ', minQty)
+    #print('최소 매수가: ', minNotional)
 
 
     # 마켓가로 ETHUSDT를 매수합니다
-    ret = client.order_market(symbol='ETHUSDT', side='BUY', quantity=str(0.007))
-    print(ret)
+    #ret = client.order_market(symbol='ETHUSDT', side='BUY', quantity=str(0.007))
+    #print(ret)
 
+
+    # 예약된 주문을 확인합니다.
+    #res = client.get_open_orders(symbol='BTCUSDT')
+    #for row in res:
+    #    pprint.pprint(row)
+
+
+    # 예약된 주문을 확인합니다.
+    #res = client.get_order(symbol='BTCUSDT', orderId=13137452598)
+    #pprint.pprint(res)
+
+
+    # 예약된 주문을 취소합니다.
+    client.cancel_order(symbol='BTCUSDT', orderId=13137452598)
+    
 
 
     closeClient(client)
