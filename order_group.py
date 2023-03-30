@@ -94,7 +94,21 @@ if __name__ == '__main__':
     buy_order = client.get_order_book(symbol='BTCUSDT', limit=5000)['bids']
     buy_orderbook_array = np.array(list(map(
                           functools.partial(convert_round, grouping=100), buy_order)), dtype='float64')
-    print(buy_orderbook_array)
+    #print(buy_orderbook_array)
+
+
+    # 중복들을 제거해준다.
+    orderbook_price = np.unique(buy_orderbook_array[:,0])
+    #print(orderbook_price)
+
+    # 그룹들의 대표 값들을 루프를 돌려서 buy_orderbook_array 에서
+    # 해당 하는 값들의 물량들만 가져와서 더해주자
+    grouping_price = [ (i, np.sum(buy_orderbook_array[buy_orderbook_array[:,0] == i,1])) for i in orderbook_price ]
+
+
+    # 비트코인 물량 기준으로 내림차순 정렬
+    orderPrice_group_data = sorted(grouping_price, key=itemgetter(1), reverse=True)
+    print(orderPrice_group_data)
 
 
 
