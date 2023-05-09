@@ -6,3 +6,4 @@ build
 .venv
 env.py
 report
+test*.py

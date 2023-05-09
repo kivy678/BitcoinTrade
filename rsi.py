@@ -13,14 +13,14 @@ from datetime import datetime
 from binance import Client
 from binance.exceptions import BinanceAPIException
 
-from env import KEY, SECRET
+from env import *
 
 #############################################################################
 
 
 def getClient():
     try:
-        return Client(KEY, SECRET, {"verify": True, "timeout": 20})
+        return Client(BINANCE_ACCESS, BINANCE_SECRET, {"verify": True, "timeout": 20})
     except BinanceAPIException as e:
         print(e)
         return False

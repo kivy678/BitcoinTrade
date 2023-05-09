@@ -11,13 +11,13 @@ from binance.exceptions import BinanceAPIException
 from binance.enums import *
 from binance.helpers import round_step_size
 
-from env import KEY, SECRET
+from env import *
 
 #############################################################################
 
 def getClient():
     try:
-        return Client(KEY, SECRET, {"verify": True, "timeout": 20})
+        return Client(BINANCE_ACCESS, BINANCE_SECRET, {"verify": True, "timeout": 20})
     except BinanceAPIException as e:
         print(e)
         return False
