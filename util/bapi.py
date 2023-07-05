@@ -2,6 +2,7 @@
 
 #############################################################################
 
+import pprint
 import time
 import win32api
 
@@ -66,8 +67,9 @@ def check_api_limit(client):
 # 최소 거래 사이즈 확인 (금액)
 def get_require_minsize(client, symbol):
     info = client.get_symbol_info(symbol)
+
     for types in info.get('filters'):
-        if types.get('filterType') == 'MIN_NOTIONAL':
+        if types.get('filterType') == 'NOTIONAL':
             return float(types.get('minNotional'))
 
 
