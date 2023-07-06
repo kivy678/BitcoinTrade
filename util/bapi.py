@@ -95,3 +95,8 @@ def get_order_status(client, symbol, orderId):
 def cancle_order(client, symbol, orderId):
     return client.cancel_order(symbol=symbol, orderId=orderId)
 
+
+# 
+def get_orders(client, symbol):
+    return client.get_open_orders(symbol=symbol)
+
