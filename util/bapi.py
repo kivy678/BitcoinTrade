@@ -57,10 +57,10 @@ def float_to_str(f):
 
 def check_api_limit(client):
     resp = client.response.headers.get('x-mbx-used-weight-1m')
-    if int(resp) > 1200:
-        return True
+    if int(resp) >= 1200:
+        return True, int(resp)
     else:
-        return False
+        return False, int(resp)
 
 
 
@@ -72,6 +72,11 @@ def get_require_minsize(client, symbol):
         if types.get('filterType') == 'NOTIONAL':
             return float(types.get('minNotional'))
 
+
+# 마지막 거래 가격
+def get_recent_price(client, symbol):
+    for info in client.get_recent_trades(symbol=symbol, limit=1):
+        return float(info.get('price'))
 
 
 # 지갑에서 수량 가져오기
@@ -96,7 +101,18 @@ def cancle_order(client, symbol, orderId):
     return client.cancel_order(symbol=symbol, orderId=orderId)
 
 
-# 
+# 오더북 가져오기
 def get_orders(client, symbol):
     return client.get_open_orders(symbol=symbol)
 
+
+# limit 매도 주문
+def create_sell(client, symbol, price, quantity, loseTrigger):
+    order_info = client.order_oco_sell(symbol=symbol,
+                                       price=float_to_str(price),
+                                       quantity=quantity,
+                                       stopPrice=float_to_str(loseTrigger),
+                                       stopLimitPrice=float_to_str(loseTrigger),
+                                       stopLimitTimeInForce='GTC')
+
+    return order_info
