@@ -33,4 +33,4 @@ def getLogger(name, LOG_FILE, stream=False):
 
 
 LOGGER_PATH = os.path.join('LOG', 'report')
-LOG = getLogger('Report', LOGGER_PATH, False)
+LOG = getLogger('Report', LOGGER_PATH, True)

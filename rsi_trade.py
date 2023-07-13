@@ -35,39 +35,41 @@ class SellOrder(Exception): pass
 
 
 
+def init_trade(client):
+
+    #바이낸스 클라이언트 인스턴스 생성과 서버 시간 동기화
+    server_time_sync(client)
+
+    # 최소 매매 자금 체크
+    wallet_size = get_asset_balance(client)
+    LOG.info(f'현재 가지고 있는 USDT: {wallet_size}')
+
+    coin_amount = get_asset_balance(client, BTC)
+    if (coin_amount == 0) and (wallet_size < get_require_minsize(client, COIN)):
+        LOG.info(f'{COIN} 를 매매할 돈이 부족합니다.')
+        exit()
+
+
 def ready_trade(client):
-        #바이낸스 클라이언트 인스턴스 생성과 서버 시간 동기화
-        server_time_sync(client)
+
+    # API제한 체크
+    bool_limit, query_limit = check_api_limit(client)
+    if bool_limit:
+        LOG.info('API 제한...')
+        time.sleep(60)
+
+    # 60초 sleep
+    if get_asset_balance(client, 'BNB') == 0:
+        LOG.info(f'60초 동안 쉽니다.')
+        time.sleep(60)
 
 
-        # API제한 체크
-        bool_limit, query_limit = check_api_limit(client)
-        if bool_limit:
-            LOG.info('API 제한...')
-            time.sleep(60)
+    rsi = get_rsi()
+    last_price = get_recent_price(client, COIN)
+    coin_amount = get_asset_balance(client, BTC)
+    LOG.info(f'({query_limit}) 현재 RSI와 {COIN} 가격 및 보유수: {rsi}, {last_price}, {coin_amount}')
 
-        # 60초 sleep
-        if get_asset_balance(client, 'BNB') == 0:
-            LOG.info(f'60초 동안 쉽니다.')
-            time.sleep(60)
-
-
-        # 최소 매매 자금 체크
-        wallet_size = get_asset_balance(client)
-        LOG.info(f'현재 가지고 있는 USDT: {wallet_size}')
-
-
-        coin_amount = get_asset_balance(client, BTC)
-        if (coin_amount == 0) and (wallet_size < get_require_minsize(client, COIN)):
-            LOG.info(f'{COIN} 를 매매할 돈이 부족합니다.')
-            exit()
-
-
-        rsi = get_rsi()
-        last_price = get_recent_price(client, COIN)
-        LOG.info(f'({query_limit}) 현재 RSI와 {COIN} 가격 및 보유수: {rsi}, {last_price}, {coin_amount}')
-
-        return rsi, coin_amount
+    return rsi, coin_amount
 
 
 
@@ -98,6 +100,8 @@ if __name__ == '__main__':
     client = getClient()
     assert client
 
+    init_trade(client)
+    rsi, coin_amount = ready_trade(client)
 
     # 프로그램 재시작으로 인한 매수 주문이 접수 되었으나 오더 아이디 값이 초기화 되었을 경우 오더북에서 가져와야한다.
     if buy_orderId is None:
@@ -116,10 +120,12 @@ if __name__ == '__main__':
                 sell_orderId = info.get('orderId')
 
 
+    time.sleep(1)
+
+
+    #############################################################################
 
     while True:
-
-        rsi, coin_amount = ready_trade(client)
 
         if coin_amount == 0:
             # 매수 로직
