@@ -129,10 +129,10 @@ if __name__ == '__main__':
 
         if coin_amount == 0:
             # 매수 로직
-            while True:
-                rsi, coin_amount = ready_trade(client)
+            while True:   
 
                 try:
+                    rsi, coin_amount = ready_trade(client)
                     # 오더 아이디가 존재할 때 상태 값에 따라 분기
                     if buy_orderId is not None:
                         order_status = get_order_status(client, COIN, buy_orderId)
@@ -177,7 +177,7 @@ if __name__ == '__main__':
 
                             LOG.info(f'신규 매수 주문 접수 완료: {buy_orderId}, {price}, {qty}')
 
-                        except binance.exceptions.BinanceAPIException:
+                        except BinanceAPIException:
                             LOG.info('신규 매수 주문 접수 실패')
 
 
@@ -185,17 +185,21 @@ if __name__ == '__main__':
                 except BuyWaitUntilContracted:
                     pass
 
+                except BinanceAPIException:
+                    time.sleep(60)
+                    continue
+
 
                 print('매수 주문 체결 10초간 대기')
-                time.sleep(10)
+                time.sleep(5)
                 continue
 
         else:
             # 매도 로직
             while True:
-                rsi, coin_amount = ready_trade(client)
 
                 try:
+                    rsi, coin_amount = ready_trade(client)
                     # 오더 아이디가 존재할 때 상태 값에 따라 분기
                     if sell_orderId is not None:
                         order_status = get_order_status(client, COIN, sell_orderId)
@@ -245,7 +249,7 @@ if __name__ == '__main__':
                             LOG.info(f'신규 매도 주문 접수: {sell_orderId}, {price}, {origQty}, {stop_loss}')
 
 
-                        except binance.exceptions.BinanceAPIException:
+                        except BinanceAPIException:
                             LOG.info('신규 매도 주문 실패')
 
 
@@ -253,9 +257,12 @@ if __name__ == '__main__':
                 except SellWaitUntilContracted:
                     pass
 
+                except BinanceAPIException:
+                    time.sleep(60)
+                    continue
 
                 print('매도 주문 체결 10초간 대기')
-                time.sleep(10)
+                time.sleep(5)
                 continue
 
 
