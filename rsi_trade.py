@@ -67,7 +67,7 @@ def ready_trade(client):
     rsi = get_rsi()
     last_price = get_recent_price(client, COIN)
     coin_amount = get_asset_balance(client, BTC)
-    LOG.info(f'({query_limit}) 현재 RSI와 {COIN} 가격 및 보유수: {rsi}, {last_price}, {coin_amount}')
+    print(f'({query_limit}) 현재 RSI와 {COIN} 가격 및 보유수: {rsi}, {last_price}, {coin_amount}')
 
     return rsi, coin_amount
 
@@ -132,7 +132,6 @@ if __name__ == '__main__':
             while True:   
 
                 try:
-                    rsi, coin_amount = ready_trade(client)
                     # 오더 아이디가 존재할 때 상태 값에 따라 분기
                     if buy_orderId is not None:
                         order_status = get_order_status(client, COIN, buy_orderId)
@@ -161,8 +160,9 @@ if __name__ == '__main__':
 
 
                 except BuyOrder:
+                    rsi, coin_amount = ready_trade(client)
                     #매수 로직
-                    if (rsi < 30) and (buy_orderId is None):
+                    if (rsi < 30) and (buy_orderId is None) and coin_amount == 0:
                         # 1 비싸게 산다
                         buy_price = int(get_recent_price(client, COIN)) + 1
 
@@ -189,6 +189,10 @@ if __name__ == '__main__':
                     time.sleep(60)
                     continue
 
+                except Exception:
+                    time.sleep(60)
+                    continue
+
 
                 print('매수 주문 체결 10초간 대기')
                 time.sleep(5)
@@ -199,7 +203,6 @@ if __name__ == '__main__':
             while True:
 
                 try:
-                    rsi, coin_amount = ready_trade(client)
                     # 오더 아이디가 존재할 때 상태 값에 따라 분기
                     if sell_orderId is not None:
                         order_status = get_order_status(client, COIN, sell_orderId)
@@ -229,10 +232,12 @@ if __name__ == '__main__':
 
 
                 except SellOrder:
-                    if (rsi > 70) and (coin_amount >= VOLUME):
+                    rsi, coin_amount = ready_trade(client)
+
+                    if (rsi > 70) and (sell_orderId is None) and (coin_amount >= VOLUME):
                         # 1 비싸게 판다.
                         sell_price = int(get_recent_price(client, COIN)) + 1 
-                        loseTrigger = sell_price - 1000
+                        loseTrigger = sell_price - 500 
 
                         # 코인을 매도한다.
                         try:
@@ -258,6 +263,10 @@ if __name__ == '__main__':
                     pass
 
                 except BinanceAPIException:
+                    time.sleep(60)
+                    continue
+
+                except Exception:
                     time.sleep(60)
                     continue
 
