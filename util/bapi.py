@@ -2,9 +2,11 @@
 
 #############################################################################
 
+import os
+import subprocess as sp
+
 import pprint
 import time
-import win32api
 
 from binance import Client
 from binance.exceptions import BinanceAPIException
@@ -16,9 +18,18 @@ from env import *
 
 #############################################################################
 
+def SetSystemTime(year, mon, day, h, m, s):
+    datetime_str = f'{mon:02d}{day:02d}{h:02d}{m:02d}{year:04d}.{s:02d}'
+    try:
+        print(datetime_str)
+        os.system('date ' + datetime_str) 
+    except sp.CalledProcessError:
+        print('권한 실패')
+
+
 def getClient():
     try:
-        return Client(BINANCE_ACCESS, BINANCE_SECRET, {"verify": True, "timeout": 20})
+        return Client(BINANCE_ACCESS, BINANCE_SECRET, {"verify": False, "timeout": 20})
     except BinanceAPIException as e:
         print(e)
         return False
@@ -34,17 +45,16 @@ def closeClient(client):
 
 def server_time_sync(client):
     try:
-        server_time= client.get_server_time()
-    
+        server_time = client.get_server_time()
         gmtime = time.gmtime(int((server_time["serverTime"])/1000))
-        win32api.SetSystemTime(gmtime[0],
-                                gmtime[1],
-                                0,
-                                gmtime[2],
-                                gmtime[3],
-                                gmtime[4],
-                                gmtime[5],
-                                0)
+    
+        SetSystemTime(gmtime[0],
+                      gmtime[1],
+                      gmtime[2],
+                      gmtime[3],
+                      gmtime[4],
+                      gmtime[5])
+   
 
     except BinanceAPIException as e:
         print(e)
@@ -64,19 +74,65 @@ def check_api_limit(client):
 
 
 
-# 최소 거래 사이즈 확인 (금액)
-def get_require_minsize(client, symbol):
-    info = client.get_symbol_info(symbol)
+# 최소 가격의 간격
+# BTCUSDT를 거래할 경우 BTC를 가르킴
+def get_require_tick_size(client, symbol):
+    for types in client.get_symbol_info(symbol).get('filters'):
+        if  types.get('filterType') == 'PRICE_FILTER':
+            return float(types.get('tickSize'))
 
-    for types in info.get('filters'):
+
+# 최소 가격
+# BTCUSDT를 거래할 경우 USDT를 가르킴
+def get_require_min_notional(client, symbol):
+    for types in client.get_symbol_info(symbol).get('filters'):
         if types.get('filterType') == 'NOTIONAL':
             return float(types.get('minNotional'))
+
+
+# 최소 수량
+# BTCUSDT를 거래할 경우 BTC를 가르킴
+def get_require_min_lot(client, symbol):
+    for types in client.get_symbol_info(symbol).get('filters'):
+        if  types.get('filterType') == 'LOT_SIZE':
+            return types.get('minQty')
+
+
+# 최소 수량의 간격
+# BTCUSDT를 거래할 경우 BTC를 가르킴
+def get_require_min_lot_size(client, symbol):
+    for types in client.get_symbol_info(symbol).get('filters'):
+        if  types.get('filterType') == 'LOT_SIZE':
+            return float(types.get('stepSize'))
 
 
 # 마지막 거래 가격
 def get_recent_price(client, symbol):
     for info in client.get_recent_trades(symbol=symbol, limit=1):
-        return float(info.get('price'))
+        tick_size = get_require_tick_size(client, symbol)
+        return round_step_size(info.get('price'), tick_size)
+
+
+# 마지막 평균 거래 가격
+def get_avg_price(client, symbol):
+    avg_price = client.get_avg_price(symbol=symbol).get('price')
+    tick_size = get_require_tick_size(client, symbol)
+
+    return round_step_size(avg_price, tick_size)
+
+
+def qty_lot(client, qty, symbol):
+    min_lot = get_require_min_lot(client, symbol)
+    return round_step_size(qty, min_lot)
+
+
+
+# 실제 코인 거래시 최소 코인 수량
+# BTCUSDT를 거래할 경우 BTC를 가르킴
+def get_require_min_qty(client, symbol):
+    qty = get_require_min_notional(client, symbol) / float(get_avg_price(client, symbol))
+    return round_step_size(qty, get_require_min_lot_size(client, symbol))
+
 
 
 # 지갑에서 수량 가져오기
@@ -116,3 +172,5 @@ def create_sell(client, symbol, price, quantity, loseTrigger):
                                        stopLimitTimeInForce='GTC')
 
     return order_info
+
+

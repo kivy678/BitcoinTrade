@@ -7,3 +7,4 @@ build
 env.py
 report
 test*.py
+.ipynb_checkpoints
