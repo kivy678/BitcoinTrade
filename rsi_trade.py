@@ -92,7 +92,7 @@ def ready_trade(client):
     rsi = get_rsi()
     last_price = get_recent_price(client, COIN)
     coin_amount = get_asset_balance(client, BTC)
-    print(f'({query_limit})#현재 RSI와 {COIN} 가격 및 보유수: {rsi}#{last_price}#{coin_amount}')
+    LOG.info(f'({query_limit})#현재 RSI와 {COIN} 가격 및 보유수: {rsi}#{last_price}#{coin_amount}')
 
     return rsi, coin_amount
 
@@ -154,7 +154,7 @@ if __name__ == '__main__':
 
                             coin_amount += float(qty)
 
-                            LOG.info(f'신규 매수 주문 접수 완료: {price}#{qty}')
+                            LOG.info(f'신규 매수 주문 접수 완료: {get_rsi()}${price}#{qty}')
                             
                         except BinanceAPIException as e:
                             LOG.info(f'신규 매수 주문 접수 실패: {e}')
@@ -186,6 +186,7 @@ if __name__ == '__main__':
 
 
             if buy_log_cnt == 360:
+                ready_trade(client)
                 LOG.info('매수 주문 체결 30분간 대기')
                 buy_log_cnt = 1
             else:
@@ -221,7 +222,7 @@ if __name__ == '__main__':
                                     origQty = info.get('origQty')
                                     sell_order_id = info.get('orderId')
 
-                            LOG.info(f'신규 매도 주문 접수: {price}${origQty}')
+                            LOG.info(f'신규 매도 주문 접수: {get_rsi()}${price}${origQty}')
                             
                         except BinanceAPIException as e:
                             LOG.info(f'신규 매도 주문 실패 : {e}')
@@ -253,6 +254,7 @@ if __name__ == '__main__':
 
 
             if sell_log_cnt == 360:
+                ready_trade(client)
                 LOG.info('매도 주문 체결 30분간 대기')
                 sell_log_cnt = 1
             else:
