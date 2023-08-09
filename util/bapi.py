@@ -2,8 +2,8 @@
 
 #############################################################################
 
+import win32api
 import os
-import subprocess as sp
 
 import pprint
 import time
@@ -19,11 +19,10 @@ from env import *
 #############################################################################
 
 def SetSystemTime(year, mon, day, h, m, s):
-    datetime_str = f'{mon:02d}{day:02d}{h:02d}{m:02d}{year:04d}.{s:02d}'
     try:
-        print(datetime_str)
-        os.system('date ' + datetime_str) 
-    except sp.CalledProcessError:
+        win32api.SetSystemTime(year,mon,day,h,h,m,s,0)
+
+    except Exception as e:
         print('권한 실패')
 
 
@@ -47,14 +46,13 @@ def server_time_sync(client):
     try:
         server_time = client.get_server_time()
         gmtime = time.gmtime(int((server_time["serverTime"])/1000))
-    
+
         SetSystemTime(gmtime[0],
                       gmtime[1],
                       gmtime[2],
                       gmtime[3],
                       gmtime[4],
                       gmtime[5])
-   
 
     except BinanceAPIException as e:
         print(e)
@@ -121,18 +119,16 @@ def get_avg_price(client, symbol):
     return round_step_size(avg_price, tick_size)
 
 
-def qty_lot(client, qty, symbol):
-    min_lot = get_require_min_lot(client, symbol)
-    return round_step_size(qty, min_lot)
-
-
-
 # 실제 코인 거래시 최소 코인 수량
 # BTCUSDT를 거래할 경우 BTC를 가르킴
 def get_require_min_qty(client, symbol):
     qty = get_require_min_notional(client, symbol) / float(get_avg_price(client, symbol))
     return round_step_size(qty, get_require_min_lot_size(client, symbol))
 
+
+def qty_lot(client, qty, symbol):
+    min_lot = get_require_min_lot(client, symbol)
+    return round_step_size(qty, min_lot)
 
 
 # 지갑에서 수량 가져오기
@@ -172,5 +168,3 @@ def create_sell(client, symbol, price, quantity, loseTrigger):
                                        stopLimitTimeInForce='GTC')
 
     return order_info
-
-
