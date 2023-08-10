@@ -64,7 +64,7 @@ if __name__ == '__main__':
     # 현재 캔들 정보를 가져옵니다.
     candles = client.get_klines(symbol='BTCUSDT',
                                 interval=Client.KLINE_INTERVAL_15MINUTE,
-                                limit=14)
+                                limit=250)
 
 
     # 데이터 프레임 생성
@@ -95,6 +95,12 @@ if __name__ == '__main__':
     rsi = 100 - (100 / (1 + rs))
 
     print(rsi)
+
+
+
+
+
+
 
 
     closeClient(client)

@@ -168,3 +168,10 @@ def create_sell(client, symbol, price, quantity, loseTrigger):
                                        stopLimitTimeInForce='GTC')
 
     return order_info
+
+
+
+# 모든 심볼 정보 가져오기
+def get_all_tickers(client, coin):
+    return (row.get('symbol') for row in client.get_all_tickers() if row.get('symbol').endswith(coin))
+
