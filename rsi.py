@@ -94,12 +94,7 @@ if __name__ == '__main__':
     rs = au / ad
     rsi = 100 - (100 / (1 + rs))
 
-    print(rsi)
-
-
-
-
-
+    print(np.round(rsi, 2))
 
 
 

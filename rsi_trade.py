@@ -72,7 +72,7 @@ def get_rsi():
 
     rsi = ta.momentum.RSIIndicator(close=df['Close'], window=14).rsi()
 
-    return int(rsi.loc[249])
+    return np.round(rsi.loc[249], 2)
 
 
 def ready_trade(client):
