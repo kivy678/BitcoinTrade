@@ -6,6 +6,8 @@ import warnings
 warnings.filterwarnings("ignore")
 
 import pprint
+
+from tqdm import tqdm
 from util.bapi import *
 from binance.helpers import round_step_size
 
@@ -37,16 +39,22 @@ if __name__ == '__main__':
     min_size = get_min_size('BTCUSDT')
     print(min_size)
 
-    for symbol in client.get_all_tickers():
-        symbol_name = symbol.get('symbol')
 
+    info =  client.get_exchange_info()
+    exclude_coin   = ['UP', 'DOWN', 'BEAR', 'BULL'] # 레버리지 코인
+
+    for x in info.get('symbols'):
+        symbol_name = x.get('symbol')
+
+        # USDT 이고 레버리지 코인이 아니며, 트레이딩이 가능한 코인
         if symbol_name.endswith('USDT') and                                     \
-            client.get_symbol_info(symbol_name).get('status') == 'TRADING':
+            all(exclude not in symbol_name for exclude in exclude_coin) and     \
+            x.get('status') == 'TRADING':
 
             print(symbol_name, get_min_size(symbol_name))
 
+            time.sleep(2)
 
-        time.sleep(1)
 
 
     #############################################################################
