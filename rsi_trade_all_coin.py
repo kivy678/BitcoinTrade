@@ -100,7 +100,6 @@ def init_trade(client):
         for symbol in order_book:
             order_book[symbol]['buy_orderId']    = None
             order_book[symbol]['sell_orderId']   = None
-            order_book[symbol]['rsi']            = 50
 
 
     # 오더북 체크
@@ -206,8 +205,20 @@ if __name__ == '__main__':
     assert client
 
     order_book, trade_system = init_trade(client)
+
+    # 상위 30코인 찾기
     find_top_coin(client, order_book, trade_system)
+
+    # RSI 전부 계산
     find_rsi(client, order_book, trade_system)
+
+    # 트레이딩인 RSI을 가져와서 조건에 맞는 코인은 매수 로직 태우기
+    for symbol in order_book:
+        if order_book[symbol].get('trading'):
+            rsi = order_book[symbol].get('rsi')
+            print(symbol, rsi)
+
+
 
 
 
