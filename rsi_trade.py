@@ -2,9 +2,6 @@
 
 #############################################################################
 
-from binance.helpers import round_step_size
-
-
 import warnings
 warnings.filterwarnings("ignore")
 
@@ -13,6 +10,7 @@ import ta
 
 import pandas as pd
 import numpy as np
+np.set_printoptions(suppress=True)
 
 from util.bapi import *
 from util.Logger import LOG
@@ -21,14 +19,18 @@ import pprint
 
 #############################################################################
 
-np.set_printoptions(suppress=True)
+BTC             = 'BTC'
+COIN            = 'BTCUSDT'
+VOLUME          = 0.002
+CONTROL_SIZE_PRICE = 2
 
-BTC = 'BTC'
-COIN = 'BTCUSDT'
-VOLUME = 0.002
+buy_order_id    = None
+sell_order_id   = None
 
-buy_order_id = None
-sell_order_id = None
+tick_size       = 0
+step_size       = 0
+min_lot         = 0
+min_notional    = 0
 
 KLINE_INTERVAL = Client.KLINE_INTERVAL_15MINUTE
 
@@ -40,25 +42,28 @@ class BuyOrder(Exception): pass
 class SellOrder(Exception): pass
 
 
+def init_trade(client, symbol):
 
-def init_trade(client):
+    global tick_size
+    global step_size
+    global min_lot
+    global min_notional
+
 
     #바이낸스 클라이언트 인스턴스 생성과 서버 시간 동기화
     server_time_sync(client)
 
     # 최소 매매 자금 체크
-    wallet_size = get_asset_balance(client)
-    LOG.info(f'현재 가지고 있는 USDT: {wallet_size}')
-
-    coin_amount = get_asset_balance(client, BTC)
-    if (coin_amount == 0) and (wallet_size < get_require_minsize(client, COIN)):
-        LOG.info(f'{COIN} 를 매매할 돈이 부족합니다.')
-        exit()
+    LOG.info(f'현재 가지고 있는 USDT: {get_asset_balance(client)}')
+    tick_size       = get_require_tick_size(client, symbol)
+    step_size       = get_require_min_lot_size(client, symbol)
+    min_lot         = get_require_min_lot(client, symbol)
+    min_notional    = get_require_min_notional(client, symbol)
 
 
-def get_rsi():
+def get_rsi(symbol):
     # 현재 캔들 정보를 가져옵니다.
-    candles = client.get_klines(symbol='BTCUSDT',
+    candles = client.get_klines(symbol=symbol,
                                 interval=KLINE_INTERVAL,
                                 limit=250)
 
@@ -75,54 +80,53 @@ def get_rsi():
     return np.round(rsi.loc[249], 2)
 
 
-def ready_trade(client):
+def ready_trade(client, symbol):
 
-    # API제한 체크
-    bool_limit, query_limit = check_api_limit(client)
-    if bool_limit:
-        LOG.info('API 제한...')
-        time.sleep(60)
-
-    # 60초 sleep
-    if get_asset_balance(client, 'BNB') == 0:
-        LOG.info(f'60초 동안 쉽니다.')
-        time.sleep(60)
-
-
-    rsi = get_rsi()
-    last_price = get_recent_price(client, COIN)
+    rsi         = get_rsi(symbol)
+    last_price  = get_recent_price(client, symbol, tick_size)
     coin_amount = get_asset_balance(client, BTC)
-    LOG.info(f'({query_limit})#현재 RSI와 {COIN} 가격 및 보유수: {rsi}#{last_price}#{coin_amount}')
+    LOG.info(f'현재 RSI와 {symbol} 가격 및 보유수: {rsi}#{last_price}#{coin_amount}')
 
     return rsi, coin_amount
 
 
-def buy_logic(client, buy_log_cnt):
+def buy_logic(client, symbol):
     #############################################################################
     # 매수 로직
     #############################################################################
+    print('매수 로직')
+    buy_log_cnt = 1
+
+    global buy_order_id
+    global sell_order_id
+    global tick_size
+    global step_size
+    global min_lot
+    global min_notional
+
+
+    # 코인이 매수되었고 프로그램 재시작으로 인해 buy_order_id를 알 수 없는 경우
+    if (sell_order_id is not None) or (get_asset_balance(client, BTC) > get_require_min_qty(client, symbol, min_notional, step_size, tick_size)):
+        return
+
+
     while True:
         try:
-            # 매수 체결이 이루어진 상태이고 프로그램 재시작으로 인해 buy_order_id를 알 수 없는 경우
-            if get_asset_balance(client, BTC) > get_require_min_qty(client, COIN):
-                return
-
             # 매수된 코인이 없기 때문에 매수 주문서 접수 대기. 간혹 잔여 코인이 있을 수도 있음
-            elif buy_order_id is None:
-                if get_rsi() < 30:
-                    buy_price = int(get_recent_price(client, COIN)) + 1
+            if buy_order_id is None:
+                rsi = get_rsi(symbol)
+                if rsi < 30:
+                    buy_price = get_recent_price(client, symbol, tick_size) + (tick_size * CONTROL_SIZE_PRICE)
 
                     try:
-                        order_info  = create_buy(client, COIN, buy_price, qty_lot(client, VOLUME, COIN))
+                        order_info  = create_buy(client, COIN, buy_price, qty_lot(VOLUME, step_size))
                         qty         = order_info.get('origQty')
                         complte_qty = order_info.get('cummulativeQuoteQty')
                         buy_order_id = order_info.get('orderId')
                         status      = order_info.get('status')
                         price       = order_info.get('price')
 
-                        coin_amount += float(qty)
-
-                        LOG.info(f'신규 매수 주문 접수 완료: {get_rsi()}${price}#{qty}')
+                        LOG.info(f'신규 매수 주문 접수 완료: {rsi}${price}#{qty}')
                         
                     except BinanceAPIException as e:
                         LOG.info(f'신규 매수 주문 접수 실패: {e}')
@@ -135,7 +139,6 @@ def buy_logic(client, buy_log_cnt):
                 # 매수 주문이 체결될 때까지 대기
                 if order_status == ORDER_STATUS_NEW:
                     time.sleep(1)
-                    
 
                 # 이전에 접수 되었던 예약 매수 주문이 취소되었거나 유효기간이 지나면 다시 예약 매수 주문이 접수될 때까지 대기
                 elif order_status in (ORDER_STATUS_CANCELED, ORDER_STATUS_EXPIRED):
@@ -150,6 +153,7 @@ def buy_logic(client, buy_log_cnt):
                     return
 
         except Exception as e:
+            LOG.info(e)
             time.sleep(60)
 
 
@@ -163,35 +167,38 @@ def buy_logic(client, buy_log_cnt):
         time.sleep(5)
 
 
-def sell_logic(client, sell_log_cnt):
+def sell_logic(client, symbol):
     #############################################################################
     # 매도 로직
     #############################################################################
+    print('매도 로직')
+    sell_log_cnt = 1
+
+    global buy_order_id
+    global sell_order_id
+    global tick_size
+    global step_size
+    global min_lot
+    global min_notional
+
+
     while True:
         try:
-            # 매도 체결이 이루어진 상태이고 프로그램 재시작으로 인해 sell_order_id를 알 수 없는 경우
-            if get_asset_balance(client, BTC) <= get_require_min_qty(client, COIN):
-                return
-
             # 매도된 코인이 없기 때문에 매도 주문서 접수 대기. 간혹 잔여 코인이 있을 수도 있음
-            elif sell_order_id is None:
-                if get_rsi() > 70:
-                    sell_price = int(get_recent_price(client, COIN)) + 1 
-                    loseTrigger = sell_price - 500 
+            if sell_order_id is None:
+                rsi = get_rsi(symbol)
+                if rsi >= 70:
+                    sell_price = get_recent_price(client, symbol, tick_size) - (tick_size * CONTROL_SIZE_PRICE)
                     coin_amount = get_asset_balance(client, BTC)
 
                     try:
-                        order_info  = create_sell(client, COIN, sell_price, qty_lot(client, coin_amount, COIN), loseTrigger)
-                        for info in order_info.get('orderReports'):
-                            if info.get('type') == 'STOP_LOSS_LIMIT' and info.get('status') == 'NEW':
-                                stop_loss = info.get('stopPrice')
+                        order_info  = create_sell(client, COIN, sell_price, qty_lot(coin_amount, step_size))
+                        origQty         = order_info.get('origQty')
+                        sell_order_id   = order_info.get('orderId')
+                        status          = order_info.get('status')
+                        price           = order_info.get('price')
 
-                            elif info.get('type') == 'LIMIT_MAKER' and info.get('status') == 'NEW':
-                                price = info.get('price')
-                                origQty = info.get('origQty')
-                                sell_order_id = info.get('orderId')
-
-                        LOG.info(f'신규 매도 주문 접수: {get_rsi()}${price}${origQty}')
+                        LOG.info(f'신규 매도 주문 접수: {rsi}${price}${origQty}')
                         
                     except BinanceAPIException as e:
                         LOG.info(f'신규 매도 주문 실패 : {e}')
@@ -219,6 +226,7 @@ def sell_logic(client, sell_log_cnt):
                     return
 
         except Exception as e:
+            LOG.info(e)
             time.sleep(60)
 
 
@@ -241,8 +249,8 @@ if __name__ == '__main__':
     client = getClient()
     assert client
 
-    init_trade(client)
-    rsi, coin_amount = ready_trade(client)
+    init_trade(client, COIN)
+    rsi, coin_amount = ready_trade(client, COIN)
 
 
     # 프로그램 재시작으로 인한 매수 주문이 접수 되었으나 오더 아이디 값이 초기화 되었을 경우 오더북에서 가져와야한다.
@@ -265,14 +273,10 @@ if __name__ == '__main__':
     time.sleep(1)
     
 
-
     while True:
-        buy_log_cnt = 1
-        sell_log_cnt = 1
-        
 
-        buy_logic(client, buy_log_cnt)
-        sell_logic(client, sell_log_cnt)
+        buy_logic(client, COIN)
+        sell_logic(client, COIN)
 
 
     #############################################################################

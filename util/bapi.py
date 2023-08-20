@@ -18,12 +18,9 @@ from env import *
 
 #############################################################################
 
-def SetSystemTime(year, mon, day, h, m, s):
-    try:
-        win32api.SetSystemTime(year,mon,day,h,h,m,s,0)
+CONTROL_SIZE_QTY    = 10
 
-    except Exception as e:
-        print('권한 실패')
+#############################################################################
 
 
 def getClient():
@@ -42,6 +39,14 @@ def closeClient(client):
         return False
 
 
+def SetSystemTime(year, mon, day, h, m, s):
+    try:
+        win32api.SetSystemTime(year,mon,0,day,h,m,s,0)
+
+    except Exception as e:
+        print('권한 실패')
+
+
 def server_time_sync(client):
     try:
         server_time = client.get_server_time()
@@ -58,7 +63,6 @@ def server_time_sync(client):
         print(e)
         return False
 
-
 def float_to_str(f):
     return format(f, '.8f')
 
@@ -69,7 +73,6 @@ def check_api_limit(client):
         return True, int(resp)
     else:
         return False, int(resp)
-
 
 
 # 최소 가격의 간격
@@ -105,9 +108,8 @@ def get_require_min_lot_size(client, symbol):
 
 
 # 마지막 거래 가격
-def get_recent_price(client, symbol):
+def get_recent_price(client, symbol, tick_size):
     for info in client.get_recent_trades(symbol=symbol, limit=1):
-        tick_size = get_require_tick_size(client, symbol)
         return round_step_size(info.get('price'), tick_size)
 
 
@@ -121,14 +123,14 @@ def get_avg_price(client, symbol):
 
 # 실제 코인 거래시 최소 코인 수량
 # BTCUSDT를 거래할 경우 BTC를 가르킴
-def get_require_min_qty(client, symbol):
-    qty = get_require_min_notional(client, symbol) / float(get_avg_price(client, symbol))
-    return round_step_size(qty, get_require_min_lot_size(client, symbol))
+def get_require_min_qty(client, symbol, min_noti, step_size, tick_size):
+    qty = min_noti / get_recent_price(client, symbol, tick_size)
+    qty = qty + step_size * CONTROL_SIZE_QTY
+    return round_step_size(qty, step_size)
 
 
-def qty_lot(client, qty, symbol):
-    min_lot = get_require_min_lot(client, symbol)
-    return round_step_size(qty, min_lot)
+def qty_lot(qty, step_size):
+    return round_step_size(qty, step_size)
 
 
 # 지갑에서 수량 가져오기
@@ -141,6 +143,13 @@ def create_buy(client, symbol, price, quantity):
     return client.order_limit_buy(symbol=symbol,
                                   price=float_to_str(price),
                                   quantity=quantity)
+
+# limit 매도 주문
+def create_sell(client, symbol, price, quantity):
+    return client.order_limit_sell(symbol=symbol,
+                                 price=float_to_str(price),
+                                 quantity=quantity)
+
 
 # 주문서 상태
 def get_order_status(client, symbol, orderId):
@@ -159,7 +168,7 @@ def get_orders(client, symbol):
 
 
 # limit 매도 주문
-def create_sell(client, symbol, price, quantity, loseTrigger):
+def create_oco_sell(client, symbol, price, quantity, loseTrigger):
     order_info = client.order_oco_sell(symbol=symbol,
                                        price=float_to_str(price),
                                        quantity=quantity,
