@@ -82,6 +82,12 @@ def get_rsi(symbol):
 
 def ready_trade(client, symbol):
 
+    global tick_size
+    global step_size
+    global min_lot
+    global min_notional
+
+
     rsi         = get_rsi(symbol)
     last_price  = get_recent_price(client, symbol, tick_size)
     coin_amount = get_asset_balance(client, BTC)
