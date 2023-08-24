@@ -36,11 +36,6 @@ KLINE_INTERVAL = Client.KLINE_INTERVAL_15MINUTE
 
 #############################################################################
 
-class BuyWaitUntilContracted(Exception): pass
-class SellWaitUntilContracted(Exception): pass
-class BuyOrder(Exception): pass
-class SellOrder(Exception): pass
-
 
 def init_trade(client, symbol):
 
@@ -80,7 +75,7 @@ def get_rsi(symbol):
     return np.round(rsi.loc[249], 2)
 
 
-def ready_trade(client, symbol):
+def ready_trade(client, symbol, log=''):
 
     global tick_size
     global step_size
@@ -91,7 +86,7 @@ def ready_trade(client, symbol):
     rsi         = get_rsi(symbol)
     last_price  = get_recent_price(client, symbol, tick_size)
     coin_amount = get_asset_balance(client, BTC)
-    LOG.info(f'현재 RSI와 {symbol} 가격 및 보유수: {rsi}#{last_price}#{coin_amount}')
+    LOG.info(f'현재 RSI와 {symbol} 가격 및 보유수: {log}#{rsi}#{last_price}#{coin_amount}')
 
     return rsi, coin_amount
 
@@ -159,18 +154,18 @@ def buy_logic(client, symbol):
                     return
 
         except Exception as e:
-            LOG.info(e)
+            LOG.info(f'매수 로직 실패:{e}')
             time.sleep(60)
 
 
-        if buy_log_cnt == 360:
-            ready_trade(client)
-            LOG.info('매수 주문 체결 30분간 대기')
+        if buy_log_cnt == 3:
+            ready_trade(client, symbol, '매수 대기')
             buy_log_cnt = 1
         else:
             buy_log_cnt += 1
 
-        time.sleep(5)
+        time.sleep(60*5)
+
 
 
 def sell_logic(client, symbol):
@@ -232,19 +227,18 @@ def sell_logic(client, symbol):
                     return
 
         except Exception as e:
-            LOG.info(e)
+            LOG.info(f'매도 로직 실패:{e}')
             time.sleep(60)
 
 
-        if sell_log_cnt == 360:
-            ready_trade(client)
-            LOG.info('매도 주문 체결 30분간 대기')
+        if sell_log_cnt == 3:
+            ready_trade(client, symbol, '매도 대기')
             sell_log_cnt = 1
         else:
             sell_log_cnt += 1
 
 
-        time.sleep(5)
+        time.sleep(60*5)
 
 
 

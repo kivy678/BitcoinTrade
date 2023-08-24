@@ -19,16 +19,16 @@ def str_to_date(t):
     return datetime.strptime(t, TIME_FORMAT)
 
 
-def is_passed_time(t1, f):
+def is_passed_time(t1, f, num):
 	if f == 'hours':
-		if  str_to_date(t1) < datetime.now() - timedelta(hours=1):
-			return True 	# 1시간 후
+		if  str_to_date(t1) < datetime.now() - timedelta(hours=num):
+			return True 	# 시간 후
 		else:
-			return False 	# 1시간 전
+			return False 	# 시간 전
 
 	elif f == 'minutes':
-		if  str_to_date(t1) < datetime.now() - timedelta(minutes=15):
-			return True 	# 15분 후
+		if  str_to_date(t1) < datetime.now() - timedelta(minutes=num):
+			return True 	# 분 후
 		else:
-			return False 	# 15분 전
+			return False 	# 분 전
 

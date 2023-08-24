@@ -33,19 +33,22 @@ TRADING_PATH   = Join('var', 'trade.txt')
 
 exclude_coin   = ['UP', 'DOWN', 'BEAR', 'BULL', 'USDC', 'BUSD', 'TUSD', 'DAI', 'GUSD', 'EUR'] # 레버리지 및 스테이블 코인
 
+WINDOWS = 7
 CHOICE_COIN = 'HIGHT'
 MONITORING_COIN = 5
 
 lock_load = threading.Lock()
 lock_save = threading.Lock()
 
+event = threading.Event()
+
 #############################################################################
 
-def time_check(j, k, f):
+def time_check(j, k, f, num):
     t = j.get(k)
     
     if t:
-        return False if is_passed_time(t, f) is True else True
+        return False if is_passed_time(t, f, num) is True else True
 
     else:
         return False
@@ -76,61 +79,37 @@ def get_rsi(symbol):
     df = df.astype(float)
     df.columns=['OpenTime', 'Open', 'High', 'Low', 'Close', 'Volume', 'CloseTime']
 
-    rsi = ta.momentum.RSIIndicator(close=df['Close'], window=14).rsi()
+    rsi = ta.momentum.RSIIndicator(close=df['Close'], window=WINDOWS).rsi()
 
     return np.round(rsi.loc[249], 2)
 
 
-def init_trade(client):
+def update_init_date(client, order_book, trade_system):
+    LOG.info('init order_book')
+    for info in get_exchange_info_usdt(client):
+        symbol      = info.get('symbol')
+        tick_size   = get_require_tick_size(info)
+        step_size   = get_require_min_step_size(info)
+        min_lot     = get_require_min_lot(info)
+        min_noti    = get_require_min_notional(info)
 
-    order_book = {}
-    trade_system = {}
+        order_book.update({symbol: {'buy_orderId':      None,
+                                    'sell_orderId':     None,
+                                    'bought':           False,
+                                    'tick_size':        tick_size,
+                                    'step_size':        step_size,
+                                    'min_lot':          min_lot,
+                                    'min_noti':         min_noti,
+                                    'luctuation_rate':  None,
+                                    'trading':          False,
+                                    'rsi': 50}})
 
-    #바이낸스 클라이언트 인스턴스 생성과 서버 시간 동기화
-    server_time_sync(client)
-
-    # 현재 USDT 자금 체크
-    LOG.info(f'현재 가지고 있는 USDT: {get_asset_balance(client)}')
-
-
-    # 최초 심볼 등록 및 파일 저장
-    if not os.path.exists(SYMBOL_PATH):
-        LOG.info('init order_book')
-        for info in get_exchange_info_usdt(client):
-            symbol      = info.get('symbol')
-            tick_size   = get_require_tick_size(info)
-            step_size   = get_require_min_step_size(info)
-            min_lot     = get_require_min_lot(info)
-            min_noti    = get_require_min_notional(info)
-
-            order_book.update({symbol: {'buy_orderId':      None,
-                                        'sell_orderId':     None,
-                                        'bought':           False,
-                                        'tick_size':        tick_size,
-                                        'step_size':        step_size,
-                                        'min_lot':          min_lot,
-                                        'min_noti':         min_noti,
-                                        'luctuation_rate':  None,
-                                        'trading':          False,
-                                        'rsi': 50}})
-
-            trade_system['init_time'] = get_today()
-            trade_system['sum_noti']  = 0
-
-    else:
-        # 이미 저장되어 있으면 파일 로드
-        LOG.info('load order_book')
-        order_book      = load_file(SYMBOL_PATH)
-        trade_system    = load_file(TRADING_PATH)
-        
-        for symbol in order_book:
-            order_book[symbol]['buy_orderId']    = None
-            order_book[symbol]['sell_orderId']   = None
-            order_book[symbol]['bought']         = False
-
-        trade_system['sum_noti']  = 0
+        trade_system['init_time'] = get_today()
+        trade_system['sum_noti']  = 0    
 
 
+
+def check_orderbook_coin(client, order_book, trade_system):
     # 오더북 체크
     for info in get_open_orders(client):
         if info.get('side') == 'BUY' and info.get('status') == ORDER_STATUS_NEW:
@@ -153,12 +132,13 @@ def init_trade(client):
             orderId     = info.get('orderId')
 
             # RSI가 30이상이면 buy 주문 유지 할필요 없기 때문에 취소한다.
-            if rsi < 10:
+            if rsi < 70:
                 LOG.info(f'{symbol}:RSI 오버로 주문을 취소합니다.')
                 cancle_order(client, symbol, orderId)
             else:
                 LOG.info(f'{symbol}:SELL 주문번호 저장')
                 order_book[info.get('symbol')]['sell_orderId'] = info.get('orderId')
+                order_book[symbol]['trading']        = True
                 order_book[symbol]['bought']         = True
 
 
@@ -169,10 +149,46 @@ def init_trade(client):
 
         if (money > 0) and (asset != 'USDT' and asset != 'BNB'):
             asset += 'USDT'
+            
             print(asset, money, get_require_min_qty(client, asset, order_book))
-            #if money >= get_require_min_qty(client, asset, order_book):
-            LOG.info(f'{asset}#구매한 코인#{money}')
-            order_book[asset]['bought'] = True
+            if money >= get_require_min_qty(client, asset, order_book):
+                LOG.info(f'{asset}#구매한 코인#{money}')
+                order_book[asset]['bought']          = True
+                order_book[asset]['trading']        = True
+
+
+
+def init_trade(client):
+
+    order_book = {}
+    trade_system = {}
+
+    #바이낸스 클라이언트 인스턴스 생성과 서버 시간 동기화
+    server_time_sync(client)
+
+    # 현재 USDT 자금 체크
+    LOG.info(f'현재 가지고 있는 USDT: {get_asset_balance(client)}')
+
+
+    # 최초 심볼 등록 및 파일 저장
+    if not os.path.exists(SYMBOL_PATH):
+        update_init_date(client, order_book, trade_system)
+
+    else:
+        # 이미 저장되어 있으면 파일 로드
+        LOG.info('load order_book')
+        order_book      = load_file(SYMBOL_PATH)
+        trade_system    = load_file(TRADING_PATH)
+        
+        for symbol in order_book:
+            order_book[symbol]['buy_orderId']    = None
+            order_book[symbol]['sell_orderId']   = None
+            order_book[symbol]['bought']         = False
+
+        trade_system['sum_noti']  = 0
+
+
+    check_orderbook_coin(client, order_book, trade_system)
 
 
     # 파일로 저장
@@ -193,7 +209,7 @@ def get_fluctuation_rate(client, symbol):
 def find_top_coin(client, order_book, trade_system):
     
     # 1시간마다 모든 코인의 등락율 계산
-    if time_check(trade_system, 'luctuation_rate_time', 'hours') is False:
+    if time_check(trade_system, 'luctuation_rate_time', 'hours', 1) is False:
         LOG.info('코인 등락율 계산 중...')
         for symbol in tqdm(order_book):
             luctuation_rate = get_fluctuation_rate(client, symbol)
@@ -234,13 +250,23 @@ def find_top_coin(client, order_book, trade_system):
 
 def find_rsi(client, order_book, trade_system):
 
-    # 15분마다 RSI 계산
-    if time_check(trade_system, 'rsi_time', 'minutes') is False:
+    # 5분마다 RSI 계산
+    if time_check(trade_system, 'rsi_time', 'minutes', 5) is False:
         LOG.info('코인 RSI 계산 중...')
         for symbol in tqdm(order_book):
             if order_book.get(symbol).get('trading'):
                 rsi = get_rsi(symbol)
+
                 order_book[symbol]['rsi'] = rsi
+
+
+        rsi_log  = '현재 RSI와 심볼: '
+        for symbol in order_book:
+            if order_book.get(symbol).get('trading'):
+                rsi = order_book[symbol].get('rsi')
+                rsi_log += f'{symbol}#{rsi}  '
+        
+        LOG.info(f'{rsi_log}')
 
 
         trade_system['rsi_time'] = get_today()
@@ -252,6 +278,14 @@ def find_rsi(client, order_book, trade_system):
 def loop_find_coin(client, order_book, trade_system):
 
     while True:
+
+        if time_check(trade_system, 'init_time', 'hours', 24) is False:
+            # 초기화 타임이 하루가 지나면 다시 초기화한다.
+            LOG.info('재초기화 중...')
+            update_init_date(client, order_book, trade_system)
+            check_orderbook_coin(client, order_book, trade_system)
+
+
         # 모니터링 할 코인 찾기
         find_top_coin(client, order_book, trade_system)
 
@@ -270,8 +304,10 @@ def loop_find_coin(client, order_book, trade_system):
         save_file(SYMBOL_PATH, order_book)
         save_file(TRADING_PATH, trade_system)
 
+        event.set()
 
-        time.sleep(60*15)
+        LOG.info(f'모니터링 할 코인 5분 대기')
+        time.sleep(60*5)
 
 
 
@@ -315,7 +351,7 @@ def buy_logic(client, symbol, order_book, buy_order_id=None):
 
 
         except Exception as e:
-            LOG.info(f'{symbol}#{e}')
+            LOG.info(f'매수로직실패:#{symbol}#{e}')
 
         if buy_log_cnt == 180:
             cancle_order(client, symbol, buy_order_id)
@@ -370,7 +406,7 @@ def sell_logic(client, symbol, order_book, sell_order_id=None):
                     return
 
         except Exception as e:
-           LOG.info(f'{symbol}#{e}')
+           LOG.info(f'매도로직실패:#{symbol}#{e}')
 
         if sell_log_cnt == 180:
             cancle_order(client, symbol, sell_order_id)
@@ -395,6 +431,7 @@ if __name__ == '__main__':
 
     order_book, trade_system = init_trade(client)
 
+
     # 등락율 계산과 RSI 계산
     find_coin_thread = Thread(target=loop_find_coin, args=(client, order_book, trade_system,))
     find_coin_thread.daemon = True
@@ -403,6 +440,7 @@ if __name__ == '__main__':
 
     # 트레이딩인 RSI을 가져와서 조건에 맞는 코인은 매수 로직 태우기
     while True:
+        event.wait()
         # 오더북 전체 루프 시작
         order_book      = load_file(SYMBOL_PATH)
         trade_system    = load_file(TRADING_PATH)
@@ -419,22 +457,22 @@ if __name__ == '__main__':
 
 
                 # 코인을 구입했다면 sell_logic 을 태운다.
-                if bought is True  and rsi >= 70 and get_asset_balance(client) < min_noti:
+                if bought is True and rsi >= 70::
                     sell_thread = Thread(target=sell_logic, args=(client, symbol, order_book, sell_orderId,))
                     sell_thread.daemon = True
                     sell_thread.start()
 
-                elif bought is False and rsi <= 30 and get_asset_balance(client) > min_noti:
+                elif bought is False and rsi <= 30:
                     buy_thread = Thread(target=buy_logic, args=(client, symbol, order_book, buy_orderId,))
                     buy_thread.daemon = True
                     buy_thread.start()
 
                 time.sleep(1)
 
-        # 60초정도 루프
-        LOG.info(f'60초 대기')        
-        time.sleep(60)
-
+        # 15분정도 루프
+        LOG.info(f'오더북 트레이드 5분 대기')        
+        time.sleep(60*5)
+   
 
     #############################################################################
 
