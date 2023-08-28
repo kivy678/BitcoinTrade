@@ -457,7 +457,7 @@ if __name__ == '__main__':
 
 
                 # 코인을 구입했다면 sell_logic 을 태운다.
-                if bought is True and rsi >= 70::
+                if bought is True and rsi >= 70:
                     sell_thread = Thread(target=sell_logic, args=(client, symbol, order_book, sell_orderId,))
                     sell_thread.daemon = True
                     sell_thread.start()
