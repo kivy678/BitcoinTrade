@@ -462,7 +462,7 @@ if __name__ == '__main__':
                     sell_thread.daemon = True
                     sell_thread.start()
 
-                elif bought is False and rsi <= 30:
+                elif bought is False and rsi <= 30 and get_asset_balance(client, symbol) < get_require_min_qty(client, symbol, order_book):
                     buy_thread = Thread(target=buy_logic, args=(client, symbol, order_book, buy_orderId,))
                     buy_thread.daemon = True
                     buy_thread.start()
