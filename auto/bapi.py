@@ -198,11 +198,11 @@ def sell_asset_balance(client, symbol):
 
 #############################################################################
 
-# 1시간전 캔들 정보 가져오기
-def get_historical_klines_1hour(client, symbol):
+# 시간전 캔들 정보 가져오기
+def get_historical_klines_hour(client, symbol, h=24):
     candles = client.get_historical_klines(symbol,
                                            Client.KLINE_INTERVAL_1MINUTE,
-                                           '1 hour ago UTC')
+                                           f'{h} hour ago UTC')
 
     return candles
 
@@ -230,7 +230,7 @@ def create_sell(client, symbol, price, quantity):
 
 def order_buy(client, symbol, alpha_price=2):
     tick_size   = get_size(symbol, 'tick_size')
-    buy_price   = get_recent_price(client, symbol) + (tick_size * alpha_price)
+    buy_price   = get_recent_price(client, symbol) - (tick_size * alpha_price)
     qty         = get_require_min_qty(client, symbol, alpha_qty=10)
     
     try:
@@ -249,11 +249,11 @@ def order_buy(client, symbol, alpha_price=2):
         LOG.info(f'신규 매수 주문 접수 실패: {symbol}#{e}')
 
 
-
-def order_sell(client, symbol):
+def order_sell(client, symbol, alpha_price=2):
     tick_size   = get_size(symbol, 'tick_size')
-    sell_price  = get_recent_price(client, symbol) - (tick_size * alpha_price)
-    coin_amount = sell_asset_balance(client, symbol, order_book)
+    sell_price  = get_recent_price(client, symbol) + (tick_size * alpha_price)
+    coin_amount = sell_asset_balance(client, symbol)
+    print(symbol, coin_amount)
 
     try:
         order_info      = create_sell(client, symbol, sell_price, coin_amount)

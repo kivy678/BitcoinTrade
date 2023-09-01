@@ -31,8 +31,8 @@ except ImportError: import json
 
 #############################################################################
 
-KLINE_INTERVAL = Client.KLINE_INTERVAL_15MINUTE
-WINDOWS = 7
+KLINE_INTERVAL = Client.KLINE_INTERVAL_15MINUTE         # RSI 15분봉기준
+WINDOWS = 7                                             # RSI 윈도우 사이즈 기본이 14
 
 TOP_COIN_CHOICE = 'HIGHT'
 MONITORING_COIN_NUMBOR = 5
@@ -62,17 +62,6 @@ def create_database():
     conn.close()
 
 
-def init_env():
-
-    conn = SQLite(DB_CONFIG)
-    rows = conn.query(query_get_init_time)
-    conn.close()
-
-    if rows is False:
-        LOG.info('테이블 생성')
-        create_database()
-
-
 #############################################################################
 
 def get_rsi(symbol):
@@ -95,7 +84,7 @@ def get_rsi(symbol):
 
 
 def get_fluctuation_rate(client, symbol):
-    klines = get_historical_klines_1hour(client, symbol)
+    klines = get_historical_klines_hour(client, symbol, 24)
     return (pd.DataFrame(klines)[4].astype(float).pct_change() + 1).prod() - 1
     
 
@@ -106,10 +95,10 @@ def find_top_coin(client):
     rows = conn.query(query_get_symbol_table)
 
 
-    # 1시간마다 모든 코인의 등락율 계산
+    # 4시간마다 모든 코인의 등락율 계산
     luctuation_rates, symbols = list(), list()
 
-    if time_check('luctuation_rate_time', 'hours', 1) is False:
+    if time_check('luctuation_rate_time', 'hours', 4) is False:
         LOG.info('코인 등락율 계산 중...')
         for symbol in tqdm(rows):
             symbol = symbol[0]
@@ -274,12 +263,19 @@ def init_symbol_data(client):
     LOG.info(f'현재 가지고 있는 USDT: {get_asset_balance(client)}')
 
 
-    # 프로그램 재시작 동안 RSI, 등가율이 변화할 수도 있기 때문에 모든 심볼 데이터를 초기화 시킨다.
-    # 이미 매매한 코인만 trading 시킨다. 
-    update_symbol_data(client)
+    conn = SQLite(DB_CONFIG)
+    rows = conn.query(query_get_init_time)
+    conn.close()
 
-    find_top_coin(client)
-    find_rsi(client)
+    # 최초 등록
+    if rows is False:
+        LOG.info('테이블 생성')
+        create_database()
+        update_symbol_data(client)
+
+        find_top_coin(client)
+        find_rsi(client)
+
 
     set_order(client)
     set_has_coin(client)
@@ -334,10 +330,10 @@ def buy_logic(client, symbol, buy_order_id=None):
         try:
             # 매수된 코인이 없기 때문에 매수 주문서 접수 대기
             if buy_order_id is None:
-                buy_order_id = order_buy(client, symbol)
+                buy_order_id = order_buy(client, symbol, alpha_price=2)
                 
                 conn = SQLite(DB_CONFIG)
-                conn.query(query_update_buy_orderId, (buy_order_id,))
+                conn.query(query_update_buy_orderId, (buy_order_id, symbol))
                 conn.query(query_update_status, ('BUY_ORDER_EXECUTE_WAIT', symbol))
                 conn.close()
 
@@ -355,7 +351,7 @@ def buy_logic(client, symbol, buy_order_id=None):
                     LOG.info(f'{symbol}#매수 주문 접수가 취소. 신규 매수 주문 접수를 대기')
                     
                     conn = SQLite(DB_CONFIG)
-                    conn.query(query_update_buy_orderId, (None,))
+                    conn.query(query_update_buy_orderId, (None, symbol))
                     conn.query(query_update_status, ('BUY_ORDER_MONITOR', symbol))
                     conn.close()
 
@@ -366,7 +362,7 @@ def buy_logic(client, symbol, buy_order_id=None):
                 elif order_status == ORDER_STATUS_FILLED:
                     LOG.info(f'{symbol}#매수 주문 체결 완료')
                     conn = SQLite(DB_CONFIG)
-                    conn.query(query_update_buy_orderId, (None,))
+                    conn.query(query_update_buy_orderId, (None, symbol))
                     conn.query(query_update_status, ('SELL_ORDER_MONITOR', symbol))
                     conn.close()
                     
@@ -379,7 +375,7 @@ def buy_logic(client, symbol, buy_order_id=None):
 
         if buy_log_cnt == 180:
             cancle_order(client, symbol, buy_order_id)
-            conn.query(query_update_buy_orderId, (None,))
+            conn.query(query_update_buy_orderId, (None, symbol))
             conn.query(query_update_status, ('BUY_ORDER_MONITOR', symbol))
             LOG.info(f'{symbol}#15분째 매수 주문이 체결이 안되서 주문을 취소')
 
@@ -391,7 +387,7 @@ def buy_logic(client, symbol, buy_order_id=None):
 
 
 
-def sell_logic(client, symbol, order_book, sell_order_id=None):
+def sell_logic(client, symbol, sell_order_id=None):
     print(f'{symbol}#start sell logic')
     #############################################################################
     # 매도 로직
@@ -402,10 +398,10 @@ def sell_logic(client, symbol, order_book, sell_order_id=None):
         try:
             # 매도된 코인이 없기 때문에 매도 주문서 접수 대기
             if sell_order_id is None:
-                sell_order_id = order_sell(client, symbol, order_book)
+                sell_order_id = order_sell(client, symbol, alpha_price=2)
 
                 conn = SQLite(DB_CONFIG)
-                row = conn.query(query_update_sell_orderId, (sell_order_id,))
+                row = conn.query(query_update_sell_orderId, (sell_order_id, symbol))
                 row = conn.query(query_update_status, ('SELL_ORDER_EXECUTE_WAIT', symbol))
                 conn.close()
    
@@ -424,7 +420,7 @@ def sell_logic(client, symbol, order_book, sell_order_id=None):
                     LOG.info(f'{symbol}#매도 주문 접수가 취소. 신규 매도 주문 접수를 대기')
                     
                     conn = SQLite(DB_CONFIG)
-                    conn.query(query_update_sell_order_id, (None,))
+                    conn.query(query_update_sell_order_id, (None, symbol))
                     conn.query(query_update_status, ('SELL_ORDER_MONITOR', symbol))
                     conn.close()
 
@@ -435,7 +431,7 @@ def sell_logic(client, symbol, order_book, sell_order_id=None):
                 elif order_status == ORDER_STATUS_FILLED:
                     LOG.info(f'{symbol}#매도 주문 체결이 완료')
                     conn = SQLite(DB_CONFIG)
-                    conn.query(query_update_sell_orderId, (None,))
+                    conn.query(query_update_sell_orderId, (None, symbol))
                     conn.query(query_update_status, ('BUY_ORDER_MONITOR', symbol))
                     conn.close()
                     
@@ -446,7 +442,7 @@ def sell_logic(client, symbol, order_book, sell_order_id=None):
 
         if sell_log_cnt == 180:
             cancle_order(client, symbol, sell_order_id)
-            conn.query(query_update_sell_orderId, (None,))
+            conn.query(query_update_sell_orderId, (None, symbol))
             conn.query(query_update_status, ('SELL_ORDER_MONITOR', symbol))
             LOG.info(f'{symbol}#15분째 매도 주문이 체결이 안되서 주문을 취소')
             
@@ -471,7 +467,6 @@ if __name__ == '__main__':
     #############################################################################
 
     #drop_table()
-    init_env()
     init_symbol_data(client)
 
     # 등락율 계산과 RSI 계산
@@ -493,7 +488,7 @@ if __name__ == '__main__':
         for row in rows:
             symbol, buy_orderId, sell_orderId, rsi, status = row
 
-            LOG.info(f'트레이드 시작#{symbol}###{status}')
+            LOG.info(f'트레이드 시작#{symbol}###{rsi}###{status}')
                         
             if status == 'BUY_ORDER_MONITOR':   #매수 조건이 이루어지기 위한 모니터링
                 if rsi < 30:
@@ -520,9 +515,9 @@ if __name__ == '__main__':
             time.sleep(1)
 
 
-        # 15분정도 루프
+        # 5분정도 루프
         LOG.info(f'오더북 트레이드 5분 대기')        
-        time.sleep(60*5)
+        time.sleep(60*1)
 
 
     #############################################################################
