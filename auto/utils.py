@@ -5,6 +5,8 @@
 from db import SQLite
 from datetime import datetime, timedelta
 
+import pytz
+
 #############################################################################
 
 DB_CONFIG = {'database': r'var/database.db'}
@@ -47,4 +49,39 @@ def time_check(column, time_type, time_number):
 
     else:
         return False
+
+
+#https://semalt.tools/ko/timestamp-converter?time=1693146048
+def utc_to_kst(t):
+
+    # 바이낸스는 밀리세컨드를 쓴다
+    unix_timestamp = t / 1000
+    utc_time = datetime.utcfromtimestamp(unix_timestamp)
+    korea_timezone = pytz.timezone('Asia/Seoul')
+    korea_time = utc_time.replace(tzinfo=pytz.utc).astimezone(korea_timezone)
+
+    return korea_time.strftime("%Y%m%dT%H%M%S")
+
+
+def kst_to_utc(t):
+    # 바이낸스는 밀리세컨드를 쓴다
+    korea_timezone = pytz.timezone('Asia/Seoul')
+    parsed_time = korea_timezone.localize(datetime.strptime(t, '%Y%m%dT%H%M%S'))
+
+    # Unix 시간으로 변환
+    unix_timestamp = (parsed_time - datetime(1970, 1, 1, tzinfo=pytz.utc)).total_seconds() * 1000
+
+    return int(unix_timestamp)
+
+
+
+def get_today_midnight():
+    # 현재 날짜와 시간 가져오기
+    now = datetime.now()
+
+    # 오늘 자정 구하기
+    today_midnight = datetime(now.year, now.month, now.day, 0, 0, 0)
+
+    # 원하는 형식으로 변환
+    return today_midnight.strftime("%Y%m%dT%H%M%S")
 

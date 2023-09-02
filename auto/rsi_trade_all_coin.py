@@ -2,8 +2,7 @@
 
 #############################################################################
 
-from threading import Thread
-import threading
+from apscheduler.schedulers.background import BackgroundScheduler
 
 import warnings
 warnings.filterwarnings("ignore")
@@ -37,16 +36,22 @@ WINDOWS = 7                                             # RSI 윈도우 사이�
 TOP_COIN_CHOICE = 'HIGHT'
 MONITORING_COIN_NUMBOR = 5
 
-event = threading.Event()
 
 DB_CONFIG = {'database': r'var/database.db'}
 
 #############################################################################
 
+class TRADE_CANCLE(Exception): pass
+class TRADE_WAIT(Exception): pass
+
+#############################################################################
+
 def drop_table():
     conn = SQLite(DB_CONFIG)
-    conn.query('DROP TABLE symbol;')
+    conn.query('DROP TABLE binance;')
     conn.query('DROP TABLE trade;')
+    conn.query('DROP TABLE rate;')
+    conn.query('DROP TABLE total_rate;')
     conn.close()
 
 
@@ -55,12 +60,55 @@ def create_database():
 
     conn.query(query_create_symbol_table)
     conn.query(query_create_trade_table)
+    conn.query(query_create_rate_table)
+    conn.query(query_create_total_rate_table)
 
     if conn.query('select exists(select * from trade);')[0][0] == 0:
         conn.query(query_insert_trade_base_data, (0,0,0,0))
 
     conn.close()
 
+
+#############################################################################
+
+def get_rate_of_return(client, symbol):
+
+    conn = SQLite(DB_CONFIG)
+    agg_trades = get_my_trades(client, symbol=symbol,
+                                startTime=kst_to_utc(get_today_midnight()))
+
+    if agg_trades == []:
+        continue
+
+    initial_values = list()
+    final_values = list()
+
+    for trade_info in agg_trades:
+        t           = trade_info.get('time')
+        qty         = float(trade_info.get('qty'))
+        quoteQty    = float(trade_info.get('quoteQty'))
+        price       = float(trade_info.get('price'))
+        commission  = float(trade_info.get('commission'))
+        buyer       = 'buy' if trade_info.get('isBuyer') else 'sell'       
+
+        if trade_info.get('isBuyer'):
+            initial_values.append(quoteQty / qty)
+        else:
+            final_values.append(quoteQty / qty)
+
+        param = (utc_to_kst(t),symbol,qty,quoteQty,price,commission,buyer)
+        conn.query(query_insert_rate_table, param)
+
+
+    # 각 분할에 대한 수익률 계산
+    profit_percentages = [((final - initial) / initial) * 100 for initial, final in zip(initial_values, final_values)]
+
+    # 전체 수익률 계산
+    return_tate = sum(profit_percentages)
+    conn.query(query_insert_total_rate_table, (get_today_midnight(),symbol,return_tate))
+
+
+    conn.close()
 
 #############################################################################
 
@@ -88,12 +136,162 @@ def get_fluctuation_rate(client, symbol):
     return (pd.DataFrame(klines)[4].astype(float).pct_change() + 1).prod() - 1
     
 
+#############################################################################
+
+def update_symbol_data(client):
+    LOG.info('심볼 데이터 초기화 및 업데이트')
+
+    conn = SQLite(DB_CONFIG)
+    conn.query(query_init_symbol_table)
+
+    for info in get_exchange_info_usdt(client):
+        symbol      = info.get('symbol')
+        tick_size   = get_require_tick_size(info)
+        step_size   = get_require_min_step_size(info)
+        min_lot     = get_require_min_lot(info)
+        min_noti    = get_require_min_notional(info)
+
+        param = (symbol, None, None, 0, tick_size, step_size, min_lot, min_noti, None, None, 'WAIT')
+        conn.query(query_insert_symbol_table, param)
+    
+    conn.query(query_update_init_time, (get_today(),))
+    
+    conn.close()
+
+
+
+def check_orderbook(client):
+    # 오더북 체크 주문이 접수된 것들은 전부 취소, 오래된 주문일 가능성이 높고, 다시 가격을 정산하여 주문을 넣는게 낫다
+    # RSI 가 너무 낮으면 코인도 정리한다.
+    LOG.info('오더북을 확인합니다.')
+    conn = SQLite(DB_CONFIG)
+
+    for info in get_open_orders(client):
+        if info.get('side') == 'BUY' and info.get('status') == ORDER_STATUS_NEW:
+            symbol      = info.get('symbol')
+            rsi         = get_rsi(info.get('symbol'))
+            buy_orderId = info.get('orderId')
+
+            LOG.info(f'{symbol}: 매수 주문을 취소합니다.')
+            cancle_order(client, symbol, buy_orderId)
+            conn.query(query_update_status, ('WAIT', symbol))
+
+    
+        elif info.get('side') == 'SELL' and info.get('status') == ORDER_STATUS_NEW:
+            symbol       = info.get('symbol')
+            rsi          = get_rsi(info.get('symbol'))
+            sell_orderId = info.get('orderId')
+
+            LOG.info(f'{symbol}:매도 주문을 취소합니다.')
+            cancle_order(client, symbol, sell_orderId)
+            conn.query(query_update_status, ('SELL_ORDER_MONITOR', symbol))
+
+
+    conn.close()
+
+
+def check_has_coin(client):
+    # 이미 매수 해서 매도해야할 코인들을 확인한다.
+    LOG.info('매수한 코인을 확인합니다.')
+    conn = SQLite(DB_CONFIG)
+
+
+    # 가지고 있는 코인은 없는데 SELL_ORDER_MONITOR 로 오기입 된 코인 정리
+    rows = conn.query(query_get_symbol_sell_monitor)
+    for row in rows:
+        symbol = row[0]
+        if get_asset_balance(client, symbol=symbol) == 0:
+            conn.query(query_update_status, ('WAIT', symbol))
+
+
+    # 현재 가지고 있는 코인이 매매 최소 수량보다 크다면 판매가 가능하므로 SELL 로직으로 넘긴다.
+    for info in client.get_account().get('balances'):
+        money = float(info.get('free'))
+        symbol = info.get('asset')
+
+        if (money > 0) and (symbol != 'USDT' and symbol != 'BNB'):
+            symbol += 'USDT'
+            min_qty = get_require_min_qty(client, symbol, alpha_qty=5)
+            
+            if money >= min_qty:
+                LOG.info(f'Sell 모니터링 시작:{symbol}###{money}###{min_qty}')
+                conn.query(query_update_status, ('SELL_ORDER_MONITOR', symbol))
+            else:
+                #LOG.info(f'코인 부족###보유코인###요구코인:{symbol}###{money}###{min_qty}')
+                # 마켓가로 정리 시도해본다
+                order_market_sell(client, symbol)
+                conn.query(query_update_status, ('WAIT', symbol))
+
+
+    conn.close()
+
+
+#############################################################################
+
+
+def find_rsi(client):
+
+    conn = SQLite(DB_CONFIG)
+    rows = conn.query(query_get_symbol_info)
+
+    # 5분마다 RSI 계산
+    rsi_log  = '현재 RSI와 심볼: '
+    LOG.info('코인 RSI 계산 중...')
+    for symbol in rows:
+        symbol = symbol[0]
+        
+        rsi = get_rsi(symbol)
+        conn.query(query_update_rsi, (rsi, symbol))
+
+        rsi_log += f'{symbol}#{rsi}  '
+    
+    LOG.info(f'{rsi_log}')
+
+    # 최종 RSI 계산 시간 기록
+    conn.query(query_update_rsi_time, (get_today(),))
+
+    # 매수할 코인들 USDT 요구 최소 총합
+    rows = conn.query(query_get_symbol_buy_monitor)
+    sum_noti = 0
+    for symbol in rows:
+        symbol = symbol[0]
+
+        sum_noti += get_size(symbol, 'min_noti')
+
+
+    conn.query(query_update_sum_noti, (sum_noti,))
+    conn.close()
+ 
+
+
 # 인기 있는 상위 코인 선정
 def find_top_coin(client):
     
     conn = SQLite(DB_CONFIG)
-    rows = conn.query(query_get_symbol_table)
+    
 
+    # 매수 모니터링한 코인들을 정리한다.
+    for row in conn.query(query_get_symbol_info):
+        symbol, buy_orderId, sell_orderId, rsi, status = row
+
+        get_rate_of_return(client, symbol)
+
+        if status == 'BUY_ORDER_MONITOR':
+            conn.query(query_update_status, ('WAIT', symbol))
+
+        elif status == 'BUY_ORDER_EXECUTE_WAIT':
+            cancle_order(client, symbol, buy_orderId)
+            conn.query(query_update_status, ('WAIT', symbol))
+
+        else:
+            # 너무 낮은 RSI는 빨리 정리한다.
+            if rsi < 30:
+                order_market_sell(client, symbol)
+                conn.query(query_update_status, ('WAIT', symbol))
+
+
+    # 매수가 가능한 (WAIT) 인 코인들 가져오기
+    rows = conn.query(query_get_symbol_table)
 
     # 4시간마다 모든 코인의 등락율 계산
     luctuation_rates, symbols = list(), list()
@@ -102,9 +300,6 @@ def find_top_coin(client):
         LOG.info('코인 등락율 계산 중...')
         for symbol in tqdm(rows):
             symbol = symbol[0]
-
-            # 모든 코인 대기 상태로 변경
-            conn.query(query_update_status, ('WAIT', symbol))
 
             # 등락율 계산
             luctuation_rate = get_fluctuation_rate(client, symbol)
@@ -135,123 +330,146 @@ def find_top_coin(client):
     conn.close()
 
 
+    # RSI도 추가로 계산해준다.
+    find_rsi(client)
 
-def find_rsi(client):
-
-    conn = SQLite(DB_CONFIG)
-    rows = conn.query(query_get_symbol_buy_monitor)
-
-    # 5분마다 RSI 계산
-    rsi_log  = '현재 RSI와 심볼: '
-    if time_check('rsi_time', 'minutes', 5) is False:
-        LOG.info('코인 RSI 계산 중...')
-        for symbol in rows:
-            symbol = symbol[0]
-            
-            rsi = get_rsi(symbol)
-            conn.query(query_update_rsi, (rsi, symbol))
-
-            rsi_log += f'{symbol}#{rsi}  '
-        
-        LOG.info(f'{rsi_log}')
-
-        # 최종 RSI 계산 시간 기록
-        conn.query(query_update_rsi_time, (get_today(),))
-
-    conn.close()
- 
 
 #############################################################################
 
-def update_symbol_data(client):
-    LOG.info('기존 심볼 데이터 초기화 및 업데이트')
 
-    conn = SQLite(DB_CONFIG)
-    conn.query(query_init_symbol_table)
-
-    for info in get_exchange_info_usdt(client):
-        symbol      = info.get('symbol')
-        tick_size   = get_require_tick_size(info)
-        step_size   = get_require_min_step_size(info)
-        min_lot     = get_require_min_lot(info)
-        min_noti    = get_require_min_notional(info)
-
-        param = (symbol, None, None, tick_size, step_size, min_lot, min_noti, None, None, 'WAIT')
-        conn.query(query_insert_symbol_table, param)
-    
-    conn.query(query_update_rsi_time, (0,))
-    conn.query(query_update_luctuation_rate_time, (0,))
-    conn.query(query_update_init_time, (get_today(),))
-    
-    conn.close()
+def buy_logic(client, symbol, buy_order_id=None):
+    print(f'{symbol}#start buy logic')
+    #############################################################################
+    # 매수 로직
+    #############################################################################
 
 
-def set_order(client):
-    # 오더북 체크
-    LOG.info('오더북을 확인합니다.')
-    conn = SQLite(DB_CONFIG)
+    try:
+        conn = SQLite(DB_CONFIG)
 
-    for info in get_open_orders(client):
-        if info.get('side') == 'BUY' and info.get('status') == ORDER_STATUS_NEW:
-            symbol      = info.get('symbol')
-            rsi         = get_rsi(info.get('symbol'))
-            buy_orderId = info.get('orderId')
+        # 매수된 코인이 없기 때문에 매수 주문서 접수 대기
+        if buy_order_id is None:
+            buy_order_id = order_limit_buy(client, symbol, alpha_price=2)
+            conn.query(query_update_order_id, (buy_order_id, None, symbol))
+            conn.query(query_update_status, ('BUY_ORDER_EXECUTE_WAIT', symbol))
 
-            # RSI가 30이상이면 buy 주문 유지 할필요 없기 때문에 취소한다.
-            if rsi > 30:
-                LOG.info(f'{symbol}:RSI 오버로 주문을 취소합니다.')
+
+        # 신규 매수 주문 접수가 완료 되었고 매수 체결이 이루어 졌는지 확인 해야한다.
+        elif buy_order_id is not None:
+            try:
+
+                order_status = get_order_status(client, symbol, buy_order_id)
+
+                # 4시간 지나면 주문 취소한다.
+                if conn.query(query_get_order_wait_time, (symbol,))[0][0]  == 60*4:
+                    raise TRADE_CANCLE('매수 주문 접수가 취소. 신규 매수 주문 접수를 대기')
+
+
+                # 이전에 접수 되었던 예약 매수 주문이 취소되었거나 유효기간이 지나면 다시 예약 매수 주문이 접수될 때까지 대기
+                elif order_status in (ORDER_STATUS_CANCELED, ORDER_STATUS_EXPIRED):
+                    raise TRADE_CANCLE('매수 주문 접수가 취소. 신규 매수 주문 접수를 대기')
+                
+                
+                # 매수 주문이 체결될 때까지 대기
+                elif order_status == ORDER_STATUS_NEW:
+                    wait_time = conn.query(query_get_order_wait_time, (symbol,))[0][0] + 1
+                    conn.query(query_update_order_wait_time, (wait_time, symbol))
+
+                    LOG.info(f'주문대기###{symbol}###{wait_time}분')
+
+
+                # 주문이 체결된 상태이며, 매도 로직으로 넘어간다.
+                elif order_status == ORDER_STATUS_FILLED:
+                    conn.query(query_update_status, ('SELL_ORDER_MONITOR', symbol))
+                    conn.query(query_update_order_id, (None, None, symbol))
+                    conn.query(query_update_order_wait_time, (0, symbol))
+
+                    LOG.info(f'{symbol}###매수 주문 체결 완료')
+
+
+            except TRADE_CANCLE as e:
                 cancle_order(client, symbol, buy_orderId)
                 conn.query(query_update_status, ('BUY_ORDER_MONITOR', symbol))
-            else:
-                # 주문을 취소하지 않고 유지한다.
-                LOG.info(f'{symbol}:BUY 주문번호 저장')
-                conn.query(query_update_buy_orderId, (buy_orderId, symbol))
-                conn.query(query_update_status, ('BUY_ORDER_EXECUTE_WAIT', symbol))
+                conn.query(query_update_order_id, (None, None, symbol))                
+                conn.query(query_update_order_wait_time, (0, symbol))
 
-    
-        elif info.get('side') == 'SELL' and info.get('status') == ORDER_STATUS_NEW:
-            symbol       = info.get('symbol')
-            rsi          = get_rsi(info.get('symbol'))
-            sell_orderId = info.get('orderId')
+                LOG.info(f'{symbol}###{e}')
 
 
-            # RSI가 70이하면 sell 주문 유지 할필요 없기 때문에 취소한다.
-            if rsi < 70:
-                LOG.info(f'{symbol}:RSI 오버로 주문을 취소합니다.')
-                cancle_order(client, symbol, sell_orderId)
+    except Exception as e:
+        LOG.info(f'매수로직실패:#{symbol}#{e}')
+
+    finally:
+        conn.close()
+
+
+
+def sell_logic(client, symbol, sell_order_id=None):
+    print(f'{symbol}#start sell logic')
+    #############################################################################
+    # 매도 로직
+    #############################################################################
+
+    try:
+        conn = SQLite(DB_CONFIG)
+
+        # 매도된 코인이 없기 때문에 매도 주문서 접수 대기
+        if sell_order_id is None:
+            sell_order_id = order_limit_sell(client, symbol, alpha_price=2)
+
+            row = conn.query(query_update_order_id, (None, sell_order_id, symbol))
+            row = conn.query(query_update_status, ('SELL_ORDER_EXECUTE_WAIT', symbol))
+
+
+        # 신규 매도 주문 접수가 완료 되었고 매도 체결이 이루어 졌는지 확인 해야한다.
+        elif sell_order_id is not None:
+            try:
+                order_status = get_order_status(client, symbol, sell_order_id)
+                
+                # 4시간 지나면 주문 취소한다.
+                if conn.query(query_get_order_wait_time, (symbol,))[0][0]  == 60*4:
+                    raise TRADE_CANCLE('매도 주문 접수가 취소. 신규 매도 주문 접수를 대기')
+
+
+                # 이전에 접수 되었던 예약 매도 주문이 취소되었거나 유효기간이 지나면 다시 예약 매도 주문이 접수될 때까지 대기
+                elif order_status in (ORDER_STATUS_CANCELED, ORDER_STATUS_EXPIRED):
+                    raise TRADE_CANCLE('매도 주문 접수가 취소. 신규 매도 주문 접수를 대기')
+
+
+                # 매도 주문이 체결될 때까지 대기
+                elif order_status == ORDER_STATUS_NEW:
+                    wait_time = conn.query(query_get_order_wait_time, (symbol,))[0][0] + 1
+                    conn.query(query_update_order_wait_time, (wait_time, symbol))
+
+                    LOG.info(f'주문대기###{symbol}###{wait_time}분')
+                    
+
+                # 매도 주문이 체결된 상태이며, 다시 매수 로직으로 넘어간다.
+                elif order_status == ORDER_STATUS_FILLED:
+                    LOG.info(f'{symbol}#매도 주문 체결이 완료')
+
+                    conn.query(query_update_status, ('BUY_ORDER_MONITOR', symbol))
+                    conn.query(query_update_order_id, (None, None, symbol))
+                    conn.query(query_update_order_wait_time, (0, symbol))
+
+
+            except TRADE_CANCLE as e:
+                cancle_order(client, symbol, sell_order_id)
                 conn.query(query_update_status, ('SELL_ORDER_MONITOR', symbol))
-            else:
-                LOG.info(f'{symbol}:SELL 주문번호 저장')
-                conn.query(query_update_sell_orderId, (sell_orderId, symbol))
-                conn.query(query_update_status, ('SELL_ORDER_EXECUTE_WAIT', symbol))
+                conn.query(query_update_order_id, (None, None, symbol))                
+                conn.query(query_update_order_wait_time, (0, symbol))
 
-    conn.close()
+                LOG.info(f'{symbol}###{e}')
 
 
-def set_has_coin(client):
-    # 코인 체크
-    LOG.info('매수한 코인을 확인합니다.')
-    conn = SQLite(DB_CONFIG)
+    except Exception as e:
+       LOG.info(f'매도로직실패:#{symbol}#{e}')
 
-    # 현재 가지고 있는 코인이 매매 최소 수량보다 크다면 판매가 가능하므로 SELL 로직으로 넘긴다.
-    for info in client.get_account().get('balances'):
-        money = float(info.get('free'))
-        symbol = info.get('asset')
-
-        if (money > 0) and (symbol != 'USDT' and symbol != 'BNB'):
-            symbol += 'USDT'
-            min_qty = get_require_min_qty(client, symbol, alpha_qty=5)
-            
-            if money >= min_qty:
-                LOG.info(f'Sell 모니터링 시작:{symbol}###{money}###{min_qty}')
-                conn.query(query_update_status, ('SELL_ORDER_MONITOR', symbol))
-            else:
-                #LOG.info(f'코인 부족###보유코인###요구코인:{symbol}###{money}###{min_qty}')
-                pass
+    finally:
+        conn.close()
 
 
-    conn.close()
-
+#############################################################################
 
 
 def init_symbol_data(client):
@@ -266,6 +484,7 @@ def init_symbol_data(client):
     conn = SQLite(DB_CONFIG)
     rows = conn.query(query_get_init_time)
     conn.close()
+    
 
     # 최초 등록
     if rows is False:
@@ -274,183 +493,18 @@ def init_symbol_data(client):
         update_symbol_data(client)
 
         find_top_coin(client)
-        find_rsi(client)
 
 
-    set_order(client)
-    set_has_coin(client)
+    check_orderbook(client)
+    check_has_coin(client)
 
-#############################################################################
-
-
-def loop_find_coin(client):
-
-    while True:
-
-        # 모니터링 할 코인 찾기
-        find_top_coin(client)
-
-        # RSI 전부 계산
-        find_rsi(client)
-
-        # find_top_coin함수에서 상태 값들을 초기화 하였기 때문에 매매한 코인들은 찾아서 진행한다.
-        set_order(client)
-        set_has_coin(client)
-
-        conn = SQLite(DB_CONFIG)
-        rows = conn.query(query_get_symbol_buy_monitor)
-
-        sum_noti = 0
-        for symbol in rows:
-            symbol = symbol[0]
-
-            sum_noti += get_size(symbol, 'min_noti')
+    find_rsi(client)
 
 
-        conn.query(query_update_sum_noti, (sum_noti,))
-        conn.close()
-
-        event.set()
-
-        LOG.info(f'모니터링 할 코인 5분 대기')
-        time.sleep(60*5)
-
-
-#############################################################################
-
-
-def buy_logic(client, symbol, buy_order_id=None):
-    print(f'{symbol}#start buy logic')
-    #############################################################################
-    # 매수 로직
-    #############################################################################
-    buy_log_cnt = 0
-
-    while True:
-        try:
-            # 매수된 코인이 없기 때문에 매수 주문서 접수 대기
-            if buy_order_id is None:
-                buy_order_id = order_buy(client, symbol, alpha_price=2)
-                
-                conn = SQLite(DB_CONFIG)
-                conn.query(query_update_buy_orderId, (buy_order_id, symbol))
-                conn.query(query_update_status, ('BUY_ORDER_EXECUTE_WAIT', symbol))
-                conn.close()
-
-
-            # 신규 매수 주문 접수가 완료 되었고 매수 체결이 이루어 졌는지 확인 해야한다.
-            elif buy_order_id is not None:
-                order_status = get_order_status(client, symbol, buy_order_id)
-                
-                # 매수 주문이 체결될 때까지 대기
-                if order_status == ORDER_STATUS_NEW:
-                    continue
-
-                # 이전에 접수 되었던 예약 매수 주문이 취소되었거나 유효기간이 지나면 다시 예약 매수 주문이 접수될 때까지 대기
-                elif order_status in (ORDER_STATUS_CANCELED, ORDER_STATUS_EXPIRED):
-                    LOG.info(f'{symbol}#매수 주문 접수가 취소. 신규 매수 주문 접수를 대기')
-                    
-                    conn = SQLite(DB_CONFIG)
-                    conn.query(query_update_buy_orderId, (None, symbol))
-                    conn.query(query_update_status, ('BUY_ORDER_MONITOR', symbol))
-                    conn.close()
-
-                    return
-
-
-                # 주문이 체결된 상태이며, 매도 로직으로 넘어간다.
-                elif order_status == ORDER_STATUS_FILLED:
-                    LOG.info(f'{symbol}#매수 주문 체결 완료')
-                    conn = SQLite(DB_CONFIG)
-                    conn.query(query_update_buy_orderId, (None, symbol))
-                    conn.query(query_update_status, ('SELL_ORDER_MONITOR', symbol))
-                    conn.close()
-                    
-                    return
-
-
-        except Exception as e:
-            LOG.info(f'매수로직실패:#{symbol}#{e}')
-
-
-        if buy_log_cnt == 180:
-            cancle_order(client, symbol, buy_order_id)
-            conn.query(query_update_buy_orderId, (None, symbol))
-            conn.query(query_update_status, ('BUY_ORDER_MONITOR', symbol))
-            LOG.info(f'{symbol}#15분째 매수 주문이 체결이 안되서 주문을 취소')
-
-            return
-
-        else:
-            buy_log_cnt += 1
-            time.sleep(5)
-
-
-
-def sell_logic(client, symbol, sell_order_id=None):
-    print(f'{symbol}#start sell logic')
-    #############################################################################
-    # 매도 로직
-    #############################################################################
-    sell_log_cnt = 0
-
-    while True:
-        try:
-            # 매도된 코인이 없기 때문에 매도 주문서 접수 대기
-            if sell_order_id is None:
-                sell_order_id = order_sell(client, symbol, alpha_price=2)
-
-                conn = SQLite(DB_CONFIG)
-                row = conn.query(query_update_sell_orderId, (sell_order_id, symbol))
-                row = conn.query(query_update_status, ('SELL_ORDER_EXECUTE_WAIT', symbol))
-                conn.close()
-   
-
-            # 신규 매도 주문 접수가 완료 되었고 매도 체결이 이루어 졌는지 확인 해야한다.
-            elif sell_order_id is not None:
-                order_status = get_order_status(client, symbol, sell_order_id)
-                
-                # 매도 주문이 체결될 때까지 대기
-                if order_status == ORDER_STATUS_NEW:
-                    continue
-                    
-
-                # 이전에 접수 되었던 예약 매도 주문이 취소되었거나 유효기간이 지나면 다시 예약 매도 주문이 접수될 때까지 대기
-                elif order_status in (ORDER_STATUS_CANCELED, ORDER_STATUS_EXPIRED):
-                    LOG.info(f'{symbol}#매도 주문 접수가 취소. 신규 매도 주문 접수를 대기')
-                    
-                    conn = SQLite(DB_CONFIG)
-                    conn.query(query_update_sell_order_id, (None, symbol))
-                    conn.query(query_update_status, ('SELL_ORDER_MONITOR', symbol))
-                    conn.close()
-
-                    return
-
-
-                # 매도 주문이 체결된 상태이며, 다시 매수 로직으로 넘어간다.
-                elif order_status == ORDER_STATUS_FILLED:
-                    LOG.info(f'{symbol}#매도 주문 체결이 완료')
-                    conn = SQLite(DB_CONFIG)
-                    conn.query(query_update_sell_orderId, (None, symbol))
-                    conn.query(query_update_status, ('BUY_ORDER_MONITOR', symbol))
-                    conn.close()
-                    
-                    return
-
-        except Exception as e:
-           LOG.info(f'매도로직실패:#{symbol}#{e}')
-
-        if sell_log_cnt == 180:
-            cancle_order(client, symbol, sell_order_id)
-            conn.query(query_update_sell_orderId, (None, symbol))
-            conn.query(query_update_status, ('SELL_ORDER_MONITOR', symbol))
-            LOG.info(f'{symbol}#15분째 매도 주문이 체결이 안되서 주문을 취소')
-            
-            return
-
-        else:
-            sell_log_cnt += 1
-            time.sleep(5)
+    scheduler = BackgroundScheduler(daemon=True, timezone='Asia/Seoul')
+    scheduler.add_job(find_top_coin, 'interval', hours=4, id="top_coin", args=(client,))
+    scheduler.add_job(find_rsi, 'interval', minutes=5, id="find_rsi", args=(client,))
+    scheduler.start()
 
 
 #############################################################################
@@ -469,15 +523,9 @@ if __name__ == '__main__':
     #drop_table()
     init_symbol_data(client)
 
-    # 등락율 계산과 RSI 계산
-    find_coin_thread = Thread(target=loop_find_coin, args=(client,))
-    find_coin_thread.daemon = True
-    find_coin_thread.start()
- 
 
     # 트레이딩인 RSI을 가져와서 조건에 맞는 코인은 매수 로직 태우기
     while True:
-        event.wait()
         
         # 오더북 전체 루프 시작
         conn = SQLite(DB_CONFIG)
@@ -515,9 +563,7 @@ if __name__ == '__main__':
             time.sleep(1)
 
 
-        # 5분정도 루프
-        LOG.info(f'오더북 트레이드 5분 대기')        
-        time.sleep(60*1)
+        time.sleep(60)
 
 
     #############################################################################
@@ -527,3 +573,4 @@ if __name__ == '__main__':
     print('Main End')
 
     #############################################################################
+

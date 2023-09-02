@@ -14,6 +14,7 @@ from binance.exceptions import BinanceAPIException
 from binance.enums import *
 from binance.helpers import round_step_size
 
+from query import *
 from Logger import LOG
 
 from db import SQLite
@@ -141,7 +142,7 @@ def get_require_min_notional(info):
 
 def get_size(symbol, size_name):
     conn = SQLite(DB_CONFIG)
-    row = conn.query(f"SELECT {size_name} FROM symbol WHERE symbol = ?", (symbol,))
+    row = conn.query(query_get_size_symbol.format(size_name), (symbol,))
     conn.close()
 
     return row[0][0] if row != () else False
@@ -212,8 +213,23 @@ def get_historical_klines_hour(client, symbol, h=24):
 def get_order_status(client, symbol, orderId):
     return client.get_order(symbol=symbol, orderId=orderId).get('status')
 
+
+# 매수 market 주문
+def create_market_buy(client, symbol, quantity):
+    return client.order_market_buy(symbol=symbol,
+                                  quantity=quantity)
+
+
+
+# 매도 market 주문
+def create_market_sell(client, symbol, quantity):
+    return client.order_market_sell(symbol=symbol,
+                                 quantity=quantity)
+
+
+
 # 매수 Limit 주문
-def create_buy(client, symbol, price, quantity):
+def create_limit_buy(client, symbol, price, quantity):
     return client.order_limit_buy(symbol=symbol,
                                   price=float_to_str(price),
                                   quantity=quantity)
@@ -221,20 +237,20 @@ def create_buy(client, symbol, price, quantity):
 
 
 # limit 매도 주문
-def create_sell(client, symbol, price, quantity):
+def create_limit_sell(client, symbol, price, quantity):
     return client.order_limit_sell(symbol=symbol,
                                  price=float_to_str(price),
                                  quantity=quantity)
 
 
 
-def order_buy(client, symbol, alpha_price=2):
+def order_limit_buy(client, symbol, alpha_price=2):
     tick_size   = get_size(symbol, 'tick_size')
     buy_price   = get_recent_price(client, symbol) - (tick_size * alpha_price)
     qty         = get_require_min_qty(client, symbol, alpha_qty=10)
     
     try:
-        order_info  = create_buy(client, symbol, buy_price, qty)
+        order_info  = create_limit_buy(client, symbol, buy_price, qty)
         qty         = order_info.get('origQty')
         complte_qty = order_info.get('cummulativeQuoteQty')
         buy_order_id = order_info.get('orderId')
@@ -249,14 +265,13 @@ def order_buy(client, symbol, alpha_price=2):
         LOG.info(f'신규 매수 주문 접수 실패: {symbol}#{e}')
 
 
-def order_sell(client, symbol, alpha_price=2):
+def order_limit_sell(client, symbol, alpha_price=2):
     tick_size   = get_size(symbol, 'tick_size')
     sell_price  = get_recent_price(client, symbol) + (tick_size * alpha_price)
     coin_amount = sell_asset_balance(client, symbol)
-    print(symbol, coin_amount)
 
     try:
-        order_info      = create_sell(client, symbol, sell_price, coin_amount)
+        order_info      = create_limit_sell(client, symbol, sell_price, coin_amount)
         qty             = order_info.get('origQty')
         sell_order_id   = order_info.get('orderId')
         status          = order_info.get('status')
@@ -270,4 +285,47 @@ def order_sell(client, symbol, alpha_price=2):
         LOG.info(f'신규 매도 주문 실패 : {symbol}#{e}')
 
 
+
+def order_market_buy(client, symbol):
+    qty            = get_require_min_qty(client, symbol, alpha_qty=10)
+    
+    try:
+        order_info  = create_market_buy(client, symbol, qty)
+        qty         = order_info.get('origQty')
+        complte_qty = order_info.get('cummulativeQuoteQty')
+        buy_order_id = order_info.get('orderId')
+        status      = order_info.get('status')
+        price       = order_info.get('price')
+        
+        LOG.info(f'마켓 매수 주문 체결 완료: {symbol}##{price}##{qty}')
+        
+    except BinanceAPIException as e:
+        LOG.info(f'마켓 매수 주문 접수 실패: {symbol}#{e}')
+
+
+def order_market_sell(client, symbol):
+    coin_amount = sell_asset_balance(client, symbol)
+
+    try:
+        order_info      = create_market_sell(client, symbol, coin_amount)
+        qty             = order_info.get('origQty')
+        sell_order_id   = order_info.get('orderId')
+        status          = order_info.get('status')
+        price           = order_info.get('price')
+
+        LOG.info(f'마켓 매도 주문 체결 완료: {symbol}##{price}##{qty}')
+
+        
+    except BinanceAPIException as e:
+        LOG.info(f'마켓 매도 주문 실패 : {symbol}#{e}')
+
+
 #############################################################################
+
+def get_my_trades(client, symbol, startTime):
+    return client.get_my_trades(symbol=symbol,
+                                startTime=startTime
+                                )
+
+#############################################################################
+

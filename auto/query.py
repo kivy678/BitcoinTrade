@@ -3,11 +3,12 @@
 #############################################################################
 
 query_create_symbol_table = """
-CREATE TABLE IF NOT EXISTS symbol
+CREATE TABLE IF NOT EXISTS binance
 (
     symbol              str primary key,
     buy_orderId         int,
     sell_orderId        int,
+    order_wait_time     int,
     tick_size           float,
     step_size           float,
     min_lot             float,
@@ -21,10 +22,34 @@ CREATE TABLE IF NOT EXISTS symbol
 query_create_trade_table = """
 CREATE TABLE IF NOT EXISTS trade
 (
-    init_time               float,
+    init_time               str,
     sum_noti                float,
-    luctuation_rate_time    float,
-    rsi_time                float
+    luctuation_rate_time    str,
+    rsi_time                str
+);
+"""
+
+query_create_rate_table = """
+CREATE TABLE IF NOT EXISTS rate
+(
+    time                    str primary key,
+    symbol                  str,
+    qty                     float,
+    quoteQty                float,
+    price                   float,
+    commission              float,
+    buyer                   str
+);
+"""
+
+query_create_total_rate_table = """
+CREATE TABLE IF NOT EXISTS total_rate
+(
+    time                    str,
+    symbol                  str,
+    return_rate             float,
+
+    CONSTRAINT total_rate_time_symbol UNIQUE (time, symbol)
 );
 """
 
@@ -40,9 +65,9 @@ SELL_ORDER_EXECUTE_WAIT     = 매도 주문 체결 대기
 #############################################################################
 
 query_insert_symbol_table = """
-INSERT OR REPLACE INTO symbol
+INSERT OR REPLACE INTO binance
 VALUES
-(?,?,?,?,?,?,?,?,?,?);
+(?,?,?,?,?,?,?,?,?,?,?);
 """
 
 query_insert_trade_base_data = """
@@ -51,10 +76,22 @@ VALUES
 (?,?,?,?)
 """
 
+query_insert_rate_table = """
+INSERT INTO rate
+VALUES
+(?,?,?,?,?,?,?)
+"""
+
+query_insert_total_rate_table = """
+INSERT INTO total_rate
+VALUES
+(?,?,?)
+"""
+
 #############################################################################
 
 query_init_symbol_table = """
-UPDATE symbol SET
+UPDATE binance SET
 buy_orderId = null,
 sell_orderId = null,
 luctuation_rate = null,
@@ -63,32 +100,33 @@ status = 'WAIT'
 """
 
 query_update_status = """
-UPDATE symbol SET
+UPDATE binance SET
 status = ?
 WHERE symbol = ?
 """
 
-query_update_buy_orderId = """
-UPDATE symbol SET
-buy_orderId = ?
-WHERE symbol = ?
-"""
-
-query_update_sell_orderId = """
-UPDATE symbol SET
+query_update_order_id = """
+UPDATE binance SET
+buy_orderId = ?,
 sell_orderId = ?
 WHERE symbol = ?
 """
 
 query_update_luctuation_rate = """
-UPDATE symbol
+UPDATE binance
 SET luctuation_rate = ?
 WHERE symbol = ?
 """
 
 query_update_rsi = """
-UPDATE symbol SET
+UPDATE binance SET
 rsi = ?
+WHERE symbol = ?
+"""
+
+query_update_order_wait_time = """
+UPDATE binance SET
+order_wait_time = ?
 WHERE symbol = ?
 """
 
@@ -116,7 +154,7 @@ SET luctuation_rate_time = ?;
 
 query_get_symbol_info = """
 SELECT symbol, buy_orderId, sell_orderId, rsi, status
-FROM symbol
+FROM binance
 WHERE status != 'WAIT';
 """
 
@@ -127,15 +165,32 @@ FROM trade;
 
 query_get_symbol_table = """
 SELECT symbol
-FROM symbol;
+FROM binance
+WHERE status = 'WAIT';
 """
 
 query_get_symbol_buy_monitor = """
 SELECT symbol
-FROM symbol
+FROM binance
 WHERE status = 'BUY_ORDER_MONITOR';
 """
 
+query_get_size_symbol = """
+SELECT {0}
+FROM binance
+WHERE symbol = ?;
+"""
+
+query_get_symbol_sell_monitor = """
+SELECT symbol
+FROM binance
+WHERE status = 'SELL_ORDER_MONITOR';
+"""
+
+query_get_all_symbol = """
+SELECT symbol
+FROM binance;
+"""
 
 #############################################################################
 
