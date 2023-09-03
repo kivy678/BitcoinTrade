@@ -19,6 +19,15 @@ CREATE TABLE IF NOT EXISTS binance
 );
 """
 
+# status 값 목록
+"""
+WAIT                        = 선정되기 전
+BUY_ORDER_MONITOR           = 매수 조건이 이루어지기 위한 모니터링
+BUY_ORDER_EXECUTE_WAIT      = 매수 주문 체결 대기
+SELL_ORDER_MONITOR          = 매도 조건이 이루어지기 위한 모니터링
+SELL_ORDER_EXECUTE_WAIT     = 매도 주문 체결 대기
+"""
+
 query_create_trade_table = """
 CREATE TABLE IF NOT EXISTS trade
 (
@@ -53,13 +62,17 @@ CREATE TABLE IF NOT EXISTS total_rate
 );
 """
 
-# status 값 목록
-"""
-WAIT                        = 선정되기 전
-BUY_ORDER_MONITOR           = 매수 조건이 이루어지기 위한 모니터링
-BUY_ORDER_EXECUTE_WAIT      = 매수 주문 체결 대기
-SELL_ORDER_MONITOR          = 매도 조건이 이루어지기 위한 모니터링
-SELL_ORDER_EXECUTE_WAIT     = 매도 주문 체결 대기
+# interval 값이 분이고 intervalNum 5이면 5분을 뜻함
+# REQUEST_WEIGHT 는 가중치인데 쿼리마다 가중치 값이 다르다.
+# RAW_REQUESTS 는 순수 쿼리 수량을 뜻함
+query_create_api_limit_table = """
+CREATE TABLE IF NOT EXISTS api_limit
+(
+    api_interval             int,       # 시간
+    intervalNum              int,       # 횟수
+    api_limit                int,       # 제한수
+    rateLimitType            str        # 타입
+);
 """
 
 #############################################################################
@@ -73,20 +86,27 @@ VALUES
 query_insert_trade_base_data = """
 INSERT INTO trade
 VALUES
-(?,?,?,?)
+(?,?,?,?);
 """
 
 query_insert_rate_table = """
-INSERT INTO rate
+INSERT OR REPLACE INTO rate
 VALUES
-(?,?,?,?,?,?,?)
+(?,?,?,?,?,?,?);
 """
 
 query_insert_total_rate_table = """
-INSERT INTO total_rate
+INSERT OR REPLACE INTO total_rate
 VALUES
-(?,?,?)
+(?,?,?);
 """
+
+query_insert_api_limit_table = """
+INSERT INTO api_limit
+VALUES
+(?,?,?,?);
+"""
+
 
 #############################################################################
 
@@ -190,6 +210,12 @@ WHERE status = 'SELL_ORDER_MONITOR';
 query_get_all_symbol = """
 SELECT symbol
 FROM binance;
+"""
+
+query_get_order_wait_time = """
+SELECT order_wait_time
+FROM binance
+WHERE symbol = ?;
 """
 
 #############################################################################

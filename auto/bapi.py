@@ -2,6 +2,8 @@
 
 #############################################################################
 
+import subprocess as sp
+
 from env import *
 
 import os
@@ -24,6 +26,14 @@ from db import SQLite
 DB_CONFIG = {'database': r'var/database.db'}
 
 #############################################################################
+
+# https://developers.binance.com/docs/binance-trading-api/spot#api-key-restrictions
+def check_api_limit(client):
+    resp = client.response.headers.get('x-mbx-used-weight-1m')
+    if int(resp) >= 1200:
+        return True, int(resp)
+    else:
+        return False, int(resp)
 
 
 def getClient():
@@ -82,6 +92,13 @@ def get_asset_balance(client, symbol='USDT'):
     
     return float(client.get_asset_balance(asset=symbol).get('free'))
 
+
+
+# API 제한 가져오기
+def get_exchange_info_api(client):
+    
+    for row in client.get_exchange_info().get('rateLimits'):
+        yield row
 
 
 # 모든 코인 거래 정보 가져오기
@@ -157,7 +174,11 @@ def get_open_orders(client):
 
 # 주문 취소
 def cancle_order(client, symbol, orderId):
-    return client.cancel_order(symbol=symbol, orderId=orderId)
+    try:
+        return client.cancel_order(symbol=symbol, orderId=orderId)
+    
+    except BinanceAPIException as e:
+        return False
 
 #############################################################################
 
@@ -264,6 +285,8 @@ def order_limit_buy(client, symbol, alpha_price=2):
     except BinanceAPIException as e:
         LOG.info(f'신규 매수 주문 접수 실패: {symbol}#{e}')
 
+        return False
+
 
 def order_limit_sell(client, symbol, alpha_price=2):
     tick_size   = get_size(symbol, 'tick_size')
@@ -284,6 +307,8 @@ def order_limit_sell(client, symbol, alpha_price=2):
     except BinanceAPIException as e:
         LOG.info(f'신규 매도 주문 실패 : {symbol}#{e}')
 
+        return False
+
 
 
 def order_market_buy(client, symbol):
@@ -302,6 +327,8 @@ def order_market_buy(client, symbol):
     except BinanceAPIException as e:
         LOG.info(f'마켓 매수 주문 접수 실패: {symbol}#{e}')
 
+        return False
+
 
 def order_market_sell(client, symbol):
     coin_amount = sell_asset_balance(client, symbol)
@@ -319,13 +346,17 @@ def order_market_sell(client, symbol):
     except BinanceAPIException as e:
         LOG.info(f'마켓 매도 주문 실패 : {symbol}#{e}')
 
+        return False
+
 
 #############################################################################
 
 def get_my_trades(client, symbol, startTime):
-    return client.get_my_trades(symbol=symbol,
+    ret =  client.get_my_trades(symbol=symbol,
                                 startTime=startTime
                                 )
+
+    return ret
 
 #############################################################################
 

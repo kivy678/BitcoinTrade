@@ -2,6 +2,7 @@
 
 #############################################################################
 
+from threading import Thread
 from apscheduler.schedulers.background import BackgroundScheduler
 
 import warnings
@@ -52,6 +53,7 @@ def drop_table():
     conn.query('DROP TABLE trade;')
     conn.query('DROP TABLE rate;')
     conn.query('DROP TABLE total_rate;')
+    conn.query('DROP TABLE api_limit;')
     conn.close()
 
 
@@ -62,6 +64,7 @@ def create_database():
     conn.query(query_create_trade_table)
     conn.query(query_create_rate_table)
     conn.query(query_create_total_rate_table)
+    conn.query(query_create_api_limit_table)
 
     if conn.query('select exists(select * from trade);')[0][0] == 0:
         conn.query(query_insert_trade_base_data, (0,0,0,0))
@@ -77,8 +80,6 @@ def get_rate_of_return(client, symbol):
     agg_trades = get_my_trades(client, symbol=symbol,
                                 startTime=kst_to_utc(get_today_midnight()))
 
-    if agg_trades == []:
-        continue
 
     initial_values = list()
     final_values = list()
@@ -153,7 +154,19 @@ def update_symbol_data(client):
 
         param = (symbol, None, None, 0, tick_size, step_size, min_lot, min_noti, None, None, 'WAIT')
         conn.query(query_insert_symbol_table, param)
-    
+
+
+    LOG.info('API 제한수 업데이트')
+    for info in get_exchange_info_api(client):
+        interval = info.get('interval')
+        intervalNum = info.get('intervalNum')
+        limit = info.get('limit')
+        rateLimitType = info.get('rateLimitType')
+
+        param = (interval, intervalNum, limit, rateLimitType)
+        conn.query(query_insert_api_limit_table, param)
+
+
     conn.query(query_update_init_time, (get_today(),))
     
     conn.close()
@@ -266,28 +279,39 @@ def find_rsi(client):
 
 # 인기 있는 상위 코인 선정
 def find_top_coin(client):
-    
+    LOG.info('코인 선정 시작')
     conn = SQLite(DB_CONFIG)
-    
 
-    # 매수 모니터링한 코인들을 정리한다.
-    for row in conn.query(query_get_symbol_info):
+    rows = conn.query(query_get_symbol_info)
+
+    # 최송 수익률 계산
+    LOG.info('최종 수익률 계산')
+    for row in rows:
         symbol, buy_orderId, sell_orderId, rsi, status = row
-
         get_rate_of_return(client, symbol)
 
+        # API 가중치가 높은 쿼리임 (20)
+        time.sleep(1)
+
+
+    # 매수 모니터링한 코인들을 정리한다.
+    LOG.info('기존 모니터링한 코인들 정리')
+    for row in rows:
+        symbol, buy_orderId, sell_orderId, rsi, status = row
         if status == 'BUY_ORDER_MONITOR':
             conn.query(query_update_status, ('WAIT', symbol))
 
         elif status == 'BUY_ORDER_EXECUTE_WAIT':
             cancle_order(client, symbol, buy_orderId)
             conn.query(query_update_status, ('WAIT', symbol))
+            conn.query(query_update_order_id, (None, sell_orderId, symbol))
 
         else:
-            # 너무 낮은 RSI는 빨리 정리한다.
-            if rsi < 30:
+            # 이미 구입 했고 너무 낮은 RSI는 빨리 정리한다.
+            if rsi is not None and rsi < 30:
                 order_market_sell(client, symbol)
                 conn.query(query_update_status, ('WAIT', symbol))
+                conn.query(query_update_order_id, (None, None, symbol))
 
 
     # 매수가 가능한 (WAIT) 인 코인들 가져오기
@@ -296,39 +320,42 @@ def find_top_coin(client):
     # 4시간마다 모든 코인의 등락율 계산
     luctuation_rates, symbols = list(), list()
 
-    if time_check('luctuation_rate_time', 'hours', 4) is False:
-        LOG.info('코인 등락율 계산 중...')
-        for symbol in tqdm(rows):
-            symbol = symbol[0]
+    LOG.info('코인 등락율 계산 중...')
+    for symbol in tqdm(rows):
+        symbol = symbol[0]
 
-            # 등락율 계산
-            luctuation_rate = get_fluctuation_rate(client, symbol)
-            conn.query(query_update_luctuation_rate,                                \
-                        (np.round(luctuation_rate*100, 2), symbol))
+        # 등락율 계산
+        luctuation_rate = get_fluctuation_rate(client, symbol)
+        conn.query(query_update_luctuation_rate,                                \
+                    (np.round(luctuation_rate*100, 2), symbol))
 
-            symbols.append(symbol)
-            luctuation_rates.append(luctuation_rate)
-
-
-        top_coin = pd.DataFrame(luctuation_rates, index=symbols, columns=['rate'])
+        symbols.append(symbol)
+        luctuation_rates.append(luctuation_rate)
 
 
-        # 상위 코인 30개 가져오기
-        if TOP_COIN_CHOICE == 'HIGHT':
-            for symbol, rate in top_coin.rate.nlargest(MONITORING_COIN_NUMBOR).iteritems():
-                conn.query(query_update_status, ('BUY_ORDER_MONITOR', symbol))
-
-        
-        elif TOP_COIN_CHOICE == 'LOW':
-            for symbol, rate in top_coin.rate.nsmallest(MONITORING_COIN_NUMBOR).iteritems():
-                conn.query(query_update_status, ('BUY_ORDER_MONITOR', symbol))
+    top_coin = pd.DataFrame(luctuation_rates, index=symbols, columns=['rate'])
 
 
-        # 최종 등락율 계산 시간 기록
-        conn.query(query_update_luctuation_rate_time, (get_today(),))
+    # 상위 코인 30개 가져오기
+    if TOP_COIN_CHOICE == 'HIGHT':
+        for symbol, rate in top_coin.rate.nlargest(MONITORING_COIN_NUMBOR).iteritems():
+            conn.query(query_update_status, ('BUY_ORDER_MONITOR', symbol))
+
+    
+    elif TOP_COIN_CHOICE == 'LOW':
+        for symbol, rate in top_coin.rate.nsmallest(MONITORING_COIN_NUMBOR).iteritems():
+            conn.query(query_update_status, ('BUY_ORDER_MONITOR', symbol))
+
+
+    # 최종 등락율 계산 시간 기록
+    conn.query(query_update_luctuation_rate_time, (get_today(),))
 
     conn.close()
 
+
+    p, count = check_api_limit(client)
+    LOG.info(f'API LIMIT 확인###{count}')
+ 
 
     # RSI도 추가로 계산해준다.
     find_rsi(client)
@@ -361,8 +388,8 @@ def buy_logic(client, symbol, buy_order_id=None):
                 order_status = get_order_status(client, symbol, buy_order_id)
 
                 # 4시간 지나면 주문 취소한다.
-                if conn.query(query_get_order_wait_time, (symbol,))[0][0]  == 60*4:
-                    raise TRADE_CANCLE('매수 주문 접수가 취소. 신규 매수 주문 접수를 대기')
+                if conn.query(query_get_order_wait_time, (symbol,))[0][0] > 10:#60*4:
+                    raise TRADE_CANCLE('오래된 매수 주문 접수가 취소. 신규 매수 주문 접수를 대기')
 
 
                 # 이전에 접수 되었던 예약 매수 주문이 취소되었거나 유효기간이 지나면 다시 예약 매수 주문이 접수될 때까지 대기
@@ -427,8 +454,8 @@ def sell_logic(client, symbol, sell_order_id=None):
                 order_status = get_order_status(client, symbol, sell_order_id)
                 
                 # 4시간 지나면 주문 취소한다.
-                if conn.query(query_get_order_wait_time, (symbol,))[0][0]  == 60*4:
-                    raise TRADE_CANCLE('매도 주문 접수가 취소. 신규 매도 주문 접수를 대기')
+                if conn.query(query_get_order_wait_time, (symbol,))[0][0]  > 10:# == 60*4:
+                    raise TRADE_CANCLE('오래된 매도 주문 접수가 취소. 신규 매도 주문 접수를 대기')
 
 
                 # 이전에 접수 되었던 예약 매도 주문이 취소되었거나 유효기간이 지나면 다시 예약 매도 주문이 접수될 때까지 대기
@@ -491,19 +518,18 @@ def init_symbol_data(client):
         LOG.info('테이블 생성')
         create_database()
         update_symbol_data(client)
-
-        find_top_coin(client)
-
+   
 
     check_orderbook(client)
     check_has_coin(client)
 
+    find_top_coin(client)
     find_rsi(client)
 
 
     scheduler = BackgroundScheduler(daemon=True, timezone='Asia/Seoul')
     scheduler.add_job(find_top_coin, 'interval', hours=4, id="top_coin", args=(client,))
-    scheduler.add_job(find_rsi, 'interval', minutes=5, id="find_rsi", args=(client,))
+    scheduler.add_job(find_rsi, 'interval', minutes=1, id="find_rsi", args=(client,))
     scheduler.start()
 
 

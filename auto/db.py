@@ -49,7 +49,7 @@ class SQLite:
                 return rows
 
         except Exception as e:
-            LOG.info(f'QueryError#{e}#{q}')
+            LOG.info(f"QueryError#{e}###{q}###{','.join(map(str, p))}")
             self._conn.rollback()
             return False
 

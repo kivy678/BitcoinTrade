@@ -9,3 +9,4 @@ pandas
 ta
 jupyterlab
 tqdm
+apscheduler
