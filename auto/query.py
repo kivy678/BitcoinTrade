@@ -68,10 +68,10 @@ CREATE TABLE IF NOT EXISTS total_rate
 query_create_api_limit_table = """
 CREATE TABLE IF NOT EXISTS api_limit
 (
-    api_interval             int,       # 시간
-    intervalNum              int,       # 횟수
-    api_limit                int,       # 제한수
-    rateLimitType            str        # 타입
+    api_interval             int,
+    intervalNum              int,
+    api_limit                int,
+    rateLimitType            str
 );
 """
 
@@ -216,6 +216,12 @@ query_get_order_wait_time = """
 SELECT order_wait_time
 FROM binance
 WHERE symbol = ?;
+"""
+
+query_get_order_wait_time_count = """
+SELECT symbol
+FROM binance
+WHERE order_wait_time > 0;
 """
 
 #############################################################################

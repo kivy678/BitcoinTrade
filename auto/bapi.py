@@ -311,8 +311,8 @@ def order_limit_sell(client, symbol, alpha_price=2):
 
 
 
-def order_market_buy(client, symbol):
-    qty            = get_require_min_qty(client, symbol, alpha_qty=10)
+def order_market_buy(client, symbol, alpha_qty=2):
+    qty            = get_require_min_qty(client, symbol, alpha_qty)
     
     try:
         order_info  = create_market_buy(client, symbol, qty)
