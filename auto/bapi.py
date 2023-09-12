@@ -311,7 +311,7 @@ def order_limit_sell(client, symbol, alpha_price=2):
 
 
 
-def order_market_buy(client, symbol, alpha_qty=2):
+def order_market_buy(client, symbol, alpha_qty=10):
     qty            = get_require_min_qty(client, symbol, alpha_qty)
     
     try:
@@ -323,6 +323,8 @@ def order_market_buy(client, symbol, alpha_qty=2):
         price       = order_info.get('price')
         
         LOG.info(f'마켓 매수 주문 체결 완료: {symbol}##{price}##{qty}')
+
+        return True
         
     except BinanceAPIException as e:
         LOG.info(f'마켓 매수 주문 접수 실패: {symbol}#{e}')
@@ -342,7 +344,9 @@ def order_market_sell(client, symbol):
 
         LOG.info(f'마켓 매도 주문 체결 완료: {symbol}##{price}##{qty}')
 
-        
+        return True
+
+
     except BinanceAPIException as e:
         LOG.info(f'마켓 매도 주문 실패 : {symbol}#{e}')
 
