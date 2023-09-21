@@ -224,6 +224,11 @@ FROM binance
 WHERE order_wait_time > 0;
 """
 
+query_get_total_rate = """
+SELECT *
+FROM total_rate;
+"""
+
 #############################################################################
 
 

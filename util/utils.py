@@ -50,7 +50,7 @@ def time_check(column, time_type, time_number):
 
 
 #https://semalt.tools/ko/timestamp-converter?time=1693146048
-def utc_to_kst(t):
+def utc_to_kst(t, col_data):
 
     # 바이낸스는 밀리세컨드를 쓴다
     unix_timestamp = t / 1000

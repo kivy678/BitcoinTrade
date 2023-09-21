@@ -245,6 +245,11 @@ def buy_logic(client, symbol):
         if order_market_buy(client, symbol, alpha_qty=15):
             conn = SQLite(DB_CONFIG)
             conn.query(query_update_status, ('SELL_ORDER_MONITOR', symbol))
+
+            # 매수/매도가 이루어졌다는걸 카운팅 표시
+            wait_time = conn.query(query_get_order_wait_time, (symbol,))[0][0] + 1
+            conn.query(query_update_order_wait_time, (wait_time, symbol))
+
             conn.close()
 
     except Exception as e:
