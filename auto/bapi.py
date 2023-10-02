@@ -249,71 +249,8 @@ def create_market_sell(client, symbol, quantity):
 
 
 
-# 매수 Limit 주문
-def create_limit_buy(client, symbol, price, quantity):
-    return client.order_limit_buy(symbol=symbol,
-                                  price=float_to_str(price),
-                                  quantity=quantity)
+def order_market_buy(client, symbol, qty):
 
-
-
-# limit 매도 주문
-def create_limit_sell(client, symbol, price, quantity):
-    return client.order_limit_sell(symbol=symbol,
-                                 price=float_to_str(price),
-                                 quantity=quantity)
-
-
-
-def order_limit_buy(client, symbol, alpha_price=2):
-    tick_size   = get_size(symbol, 'tick_size')
-    buy_price   = get_recent_price(client, symbol) - (tick_size * alpha_price)
-    qty         = get_require_min_qty(client, symbol, alpha_qty=10)
-    
-    try:
-        order_info  = create_limit_buy(client, symbol, buy_price, qty)
-        qty         = order_info.get('origQty')
-        complte_qty = order_info.get('cummulativeQuoteQty')
-        buy_order_id = order_info.get('orderId')
-        status      = order_info.get('status')
-        price       = order_info.get('price')
-        
-        LOG.info(f'신규 매수 주문 접수 완료: {symbol}##{price}##{qty}')
-
-        return buy_order_id
-        
-    except BinanceAPIException as e:
-        LOG.info(f'신규 매수 주문 접수 실패: {symbol}#{e}')
-
-        return False
-
-
-def order_limit_sell(client, symbol, alpha_price=2):
-    tick_size   = get_size(symbol, 'tick_size')
-    sell_price  = get_recent_price(client, symbol) + (tick_size * alpha_price)
-    coin_amount = sell_asset_balance(client, symbol)
-
-    try:
-        order_info      = create_limit_sell(client, symbol, sell_price, coin_amount)
-        qty             = order_info.get('origQty')
-        sell_order_id   = order_info.get('orderId')
-        status          = order_info.get('status')
-        price           = order_info.get('price')
-
-        LOG.info(f'신규 매도 주문 접수: {symbol}##{price}##{qty}')
-
-        return sell_order_id
-        
-    except BinanceAPIException as e:
-        LOG.info(f'신규 매도 주문 실패 : {symbol}#{e}')
-
-        return False
-
-
-
-def order_market_buy(client, symbol, alpha_qty=10):
-    qty            = get_require_min_qty(client, symbol, alpha_qty)
-    
     try:
         order_info  = create_market_buy(client, symbol, qty)
         qty         = order_info.get('origQty')
@@ -332,11 +269,10 @@ def order_market_buy(client, symbol, alpha_qty=10):
         return False
 
 
-def order_market_sell(client, symbol):
-    coin_amount = sell_asset_balance(client, symbol)
+def order_market_sell(client, symbol, qty):
 
     try:
-        order_info      = create_market_sell(client, symbol, coin_amount)
+        order_info      = create_market_sell(client, symbol, qty)
         qty             = order_info.get('origQty')
         sell_order_id   = order_info.get('orderId')
         status          = order_info.get('status')
