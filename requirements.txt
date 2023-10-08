@@ -10,3 +10,4 @@ ta
 jupyterlab
 tqdm
 apscheduler
+humanize
