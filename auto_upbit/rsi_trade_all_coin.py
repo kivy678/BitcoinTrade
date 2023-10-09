@@ -190,7 +190,7 @@ def init_symbol_data():
     find_rsi()
 
     scheduler = BackgroundScheduler(daemon=True, timezone='Asia/Seoul')
-    scheduler.add_job(find_rsi, 'interval', minutes=1, id="find_rsi", args=(,))
+    scheduler.add_job(find_rsi, 'interval', minutes=1, id="find_rsi")
     scheduler.start()
 
 
