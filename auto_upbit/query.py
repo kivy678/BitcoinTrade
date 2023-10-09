@@ -3,12 +3,9 @@
 #############################################################################
 # create table
 query_create_symbol_table = """
-CREATE TABLE IF NOT EXISTS binance
+CREATE TABLE IF NOT EXISTS upbit
 (
     symbol              str primary key,
-    tick_size           float,
-    step_size           float,
-    min_lot             float,
     min_noti            float,
     rsi                 float,
     status              str
@@ -28,7 +25,6 @@ CREATE TABLE IF NOT EXISTS trade
     rsi_time                str,
     kline_interval          str,
     rsi_window              int,
-    alpha_qty               int,
     trade_qty               int
 );
 """
@@ -36,27 +32,27 @@ CREATE TABLE IF NOT EXISTS trade
 #############################################################################
 # insert table
 query_insert_symbol_table = """
-INSERT OR REPLACE INTO binance
+INSERT OR REPLACE INTO upbit
 VALUES
-(?,?,?,?,?,?,?);
+(?,?,?,?);
 """
 
 query_insert_trade_base_data = """
 INSERT INTO trade
 VALUES
-(?,?,?,?,?,?);
+(?,?,?,?,?);
 """
 
 #############################################################################
-# update binance
+# update upbit
 query_update_rsi = """
-UPDATE binance SET
+UPDATE upbit SET
 rsi = ?
 WHERE symbol = ?
 """
 
 query_update_status = """
-UPDATE binance SET
+UPDATE upbit SET
 status = ?
 WHERE symbol = ?
 """
@@ -74,20 +70,20 @@ SET rsi_time = ?;
 """
 
 #############################################################################
-# get binance
+# get upbit
 query_get_all_symbol = """
 SELECT symbol
-FROM binance;
+FROM upbit;
 """
 
 query_get_symbol_info = """
 SELECT symbol, rsi, status
-FROM binance;
+FROM upbit;
 """
 
 query_get_size_symbol = """
-SELECT {0}
-FROM binance
+SELECT min_noti
+FROM upbit
 WHERE symbol = ?;
 """
 
@@ -104,7 +100,7 @@ FROM trade;
 """
 
 query_get_trade_set = """
-SELECT alpha_qty, trade_qty
+SELECT trade_qty
 FROM trade;
 """
 
