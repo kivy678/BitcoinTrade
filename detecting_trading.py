@@ -58,8 +58,8 @@ df['Close'] 	= df['Close'].astype(float)
 df['Volume'] 	= df['Volume'].astype(float)
 df['Volume_h']  = df['Volume'].apply(humanize.intword)
 
-df['OpenTime'] 	= df['OpenTime'].apply(utc_to_kst, args=(df['OpenTime'],))
-df['CloseTime'] = df['CloseTime'].apply(utc_to_kst, args=(df['CloseTime'],))
+df['OpenTime'] 	= df['OpenTime'].apply(utc_to_kst, args=('%Y%m%dT%H%M',))
+df['CloseTime'] = df['CloseTime'].apply(utc_to_kst, args=('%Y%m%dT%H%M',))
 
 df['previous_close'] = df['Close'].shift(1)
 df.dropna(inplace=True)

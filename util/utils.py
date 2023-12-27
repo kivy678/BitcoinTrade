@@ -50,7 +50,7 @@ def time_check(column, time_type, time_number):
 
 
 #https://semalt.tools/ko/timestamp-converter?time=1693146048
-def utc_to_kst(t, col_data):
+def utc_to_kst(t, time_format=TIME_FORMAT):
 
     # 바이낸스는 밀리세컨드를 쓴다
     unix_timestamp = t / 1000
@@ -58,7 +58,7 @@ def utc_to_kst(t, col_data):
     korea_timezone = pytz.timezone('Asia/Seoul')
     korea_time = utc_time.replace(tzinfo=pytz.utc).astimezone(korea_timezone)
 
-    return korea_time.strftime("%Y%m%dT%H%M%S")
+    return korea_time.strftime(time_format)
 
 
 def kst_to_utc(t):
