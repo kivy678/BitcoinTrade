@@ -11,3 +11,6 @@ jupyterlab
 tqdm
 apscheduler
 humanize
+statsmodels==0.11.1
+pystan
+prophet
